@@ -1,0 +1,40 @@
+/* Estilos base de BORA (reemplazan los de la plantilla de Vite). */
+:root {
+  --green: #2e6b3e;
+  --green-dark: #154728;
+  --terracotta: #e2692b;
+  --cream: #fefdf7;
+  --ink: #2b2b2b;
+  --muted: #5a5a52;
+  --sand: #f1efe6;
+  --border: #e4e1d5;
+
+  font-family: 'Poppins', system-ui, 'Segoe UI', Roboto, sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--ink);
+  background: var(--cream);
+  -webkit-font-smoothing: antialiased;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--cream);
+}
+
+img {
+  display: block;
+  max-width: 100%;
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
