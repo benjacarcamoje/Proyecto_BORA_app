@@ -1,4 +1,4 @@
-.npm-cache/
+﻿.npm-cache/
 .gradle-home/
 node_modules/
 **/node_modules/
@@ -12,5 +12,3 @@ backend/*.log
 **/*-adminsdk-*.json
 
 # Project exclude paths
-/android/app/
-/android/gradle/
