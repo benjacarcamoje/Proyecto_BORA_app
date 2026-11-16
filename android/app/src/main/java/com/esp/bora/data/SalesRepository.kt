@@ -34,8 +34,11 @@ class SalesRepository(
 
     /** Descuenta inventario y crea el registro en una sola transacción. */
     suspend fun registerSale(request: SaleRequest): String {
-        require(request.quantity > 0) { "La cantidad debe ser mayor que cero." }
+        require(request.quantity in 1..100_000) { "La cantidad debe estar entre 1 y 100.000." }
         require(request.placeType in setOf("feria", "otro")) { "Selecciona dónde se realizó la venta." }
+        require(request.placeType != "feria" || request.placeName.isNotBlank()) {
+            "Escribe el nombre de la feria."
+        }
         val ownerUid = auth.currentUser?.uid ?: error("Tu sesión expiró. Vuelve a ingresar.")
         val productRef = db.collection("products").document(request.productId)
         val saleRef = db.collection("sales").document()
@@ -59,19 +62,16 @@ class SalesRepository(
             if (product.modality == "Pieza única" && request.quantity != 1) {
                 throw IllegalArgumentException("Una pieza única se registra de a una.")
             }
-            val allowMadeToOrderWhenStockIsInsufficient =
-                product.managesStock && product.exhaustedBehavior == "A pedido"
-            if (product.managesStock && !allowMadeToOrderWhenStockIsInsufficient) {
-                val availableStock = variant?.stock ?: product.stock
-                if (availableStock < request.quantity) {
-                    throw IllegalStateException("No hay suficientes unidades disponibles.")
-                }
+            val availableStock = variant?.stock ?: product.stock
+            val mayRegisterAsOrder = product.exhaustedBehavior == "A pedido" && availableStock == 0
+            if (product.managesStock && availableStock < request.quantity && !mayRegisterAsOrder) {
+                throw IllegalStateException("No hay suficientes unidades disponibles.")
             }
 
             val updates = mutableMapOf<String, Any>(
                 "updatedAt" to FieldValue.serverTimestamp(),
             )
-            if (product.managesStock) {
+            if (product.managesStock && availableStock > 0) {
                 if (variant != null) {
                     val updatedVariants = product.variants.map {
                         if (it.id == variant.id) it.copy(stock = maxOf(0, it.stock - request.quantity)) else it

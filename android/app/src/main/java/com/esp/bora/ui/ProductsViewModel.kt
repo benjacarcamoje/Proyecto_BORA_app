@@ -18,6 +18,7 @@ data class ProductsUiState(
     val products: List<Product> = emptyList(),
     val error: String? = null,
     val message: String? = null,
+    val updatingAvailability: Boolean = false,
 )
 
 class ProductsViewModel(
@@ -38,6 +39,34 @@ class ProductsViewModel(
             repo.observeMyProducts(uid)
                 .catch { e -> _state.update { it.copy(loading = false, error = e.toUserMessage()) } }
                 .collect { list -> _state.value = ProductsUiState(loading = false, products = list) }
+        }
+    }
+
+    fun setAvailability(products: List<Product>, available: Boolean) {
+        val uid = currentUid ?: return
+        if (_state.value.updatingAvailability) return
+        if (products.isEmpty()) {
+            _state.update { it.copy(error = "Selecciona productos para actualizar.") }
+            return
+        }
+        if (products.any { it.ownerUid != uid }) {
+            _state.update { it.copy(error = "Solo puedes cambiar la disponibilidad de tus productos.") }
+            return
+        }
+        viewModelScope.launch {
+            _state.update { it.copy(updatingAvailability = true, error = null, message = null) }
+            try {
+                repo.setAvailability(products.map { it.id }, available)
+                _state.update {
+                    it.copy(
+                        updatingAvailability = false,
+                        message = if (available) "Productos marcados como disponibles."
+                        else "Productos ocultos del catálogo.",
+                    )
+                }
+            } catch (e: Exception) {
+                _state.update { it.copy(updatingAvailability = false, error = e.toUserMessage()) }
+            }
         }
     }
 

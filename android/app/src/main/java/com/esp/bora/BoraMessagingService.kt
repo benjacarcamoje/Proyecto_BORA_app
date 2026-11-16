@@ -9,7 +9,6 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import com.esp.bora.data.FollowRepository
 import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import kotlinx.coroutines.CoroutineScope
@@ -23,7 +22,6 @@ class BoraMessagingService : FirebaseMessagingService() {
 
     override fun onNewToken(token: String) {
         val user = FirebaseAuth.getInstance().currentUser ?: return
-        if (user.providerData.none { it.providerId == GoogleAuthProvider.PROVIDER_ID }) return
         serviceScope.launch {
             runCatching {
                 FollowRepository().registerTokenIfOptedIn(user.uid, token)

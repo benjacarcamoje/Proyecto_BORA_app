@@ -25,7 +25,7 @@ class FairRepository(
                 val now = Timestamp.now()
                 val fairs = snapshot?.documents.orEmpty()
                     .mapNotNull { document -> document.toObject(Fair::class.java)?.copy(id = document.id) }
-                    .filter { it.startsAt == null || it.startsAt >= now }
+                    .filter { it.endsAt == null || it.endsAt >= now }
                     .sortedBy { it.startsAt?.seconds ?: Long.MAX_VALUE }
                 trySend(fairs)
             }
@@ -48,6 +48,29 @@ class FairRepository(
                 trySend(invitations)
             }
         awaitClose { registration.remove() }
+    }
+
+    suspend fun suggestFairNear(uid: String, latitude: Double, longitude: Double): String? {
+        val now = Timestamp.now()
+        val fairs = db.collection("fairs")
+            .whereEqualTo("published", true)
+            .whereEqualTo("cancelled", false)
+            .get().await().documents.mapNotNull { document ->
+                document.toObject(Fair::class.java)?.copy(id = document.id)
+            }.filter { fair ->
+                val start = fair.startsAt
+                val end = fair.endsAt
+                start != null && end != null && start <= now && end >= now
+            }
+        val eligible = fairs.mapNotNull { fair ->
+            val participant = db.collection("fairs").document(fair.id)
+                .collection("participants").document(uid).get().await()
+            if (participant.getString("status") != "confirmada") return@mapNotNull null
+            val result = FloatArray(1)
+            android.location.Location.distanceBetween(latitude, longitude, fair.latitude, fair.longitude, result)
+            fair to result[0]
+        }
+        return eligible.filter { it.second <= 500f }.minByOrNull { it.second }?.first?.name
     }
 
     suspend fun respondToInvitation(fairId: String, response: String) {

@@ -41,7 +41,12 @@ import com.esp.bora.R
 fun LoginScreen(
     busy: Boolean,
     error: String?,
+    resetBusy: Boolean,
+    resetMessage: String?,
+    resetError: String?,
     onSignIn: (email: String, password: String) -> Unit,
+    onResetPassword: (email: String) -> Unit,
+    onClearResetFeedback: () -> Unit,
     onBackToModes: () -> Unit,
 ) {
     var email by rememberSaveable { mutableStateOf("") }
@@ -71,10 +76,13 @@ fun LoginScreen(
 
         OutlinedTextField(
             value = email,
-            onValueChange = { email = it },
+            onValueChange = {
+                email = it
+                onClearResetFeedback()
+            },
             label = { Text("Correo") },
             singleLine = true,
-            enabled = !busy,
+            enabled = !busy && !resetBusy,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next),
             modifier = Modifier.fillMaxWidth(),
         )
@@ -84,12 +92,29 @@ fun LoginScreen(
             onValueChange = { password = it },
             label = { Text("Contraseña") },
             singleLine = true,
-            enabled = !busy,
+            enabled = !busy && !resetBusy,
             visualTransformation = PasswordVisualTransformation(),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
             keyboardActions = KeyboardActions(onDone = { onSignIn(email, password) }),
             modifier = Modifier.fillMaxWidth(),
         )
+
+        TextButton(
+            onClick = { onResetPassword(email) },
+            enabled = !busy && !resetBusy,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(if (resetBusy) "Enviando instrucciones…" else "¿Olvidaste tu contraseña?")
+        }
+        (resetError ?: resetMessage)?.let { feedback ->
+            Text(
+                text = feedback,
+                color = if (resetError != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                style = MaterialTheme.typography.bodyMedium,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
 
         if (error != null) {
             Spacer(Modifier.height(12.dp))
@@ -104,7 +129,7 @@ fun LoginScreen(
         Spacer(Modifier.height(20.dp))
         Button(
             onClick = { onSignIn(email, password) },
-            enabled = !busy,
+            enabled = !busy && !resetBusy,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(52.dp),

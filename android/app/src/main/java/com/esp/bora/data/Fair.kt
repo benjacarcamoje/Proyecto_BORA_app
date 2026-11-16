@@ -23,5 +23,9 @@ data class FairInvitation(
     val entrepreneurName: String = "",
     val status: String = "invitada",
     val invitedBy: String = "",
+    val attended: Boolean = false,
+    val businessType: String = "",
+    val associationId: String = "",
+    val associationName: String = "",
     val updatedAt: Timestamp? = null,
 )

@@ -1,5 +1,11 @@
 package com.esp.bora.ui
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.location.LocationManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -38,6 +44,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -58,6 +65,23 @@ fun SalesScreen(
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
+    val context = LocalContext.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    fun suggestFromLastKnownLocation() {
+        val manager = context.getSystemService(LocationManager::class.java)
+        val location = runCatching {
+            manager.getProviders(true).mapNotNull { provider -> manager.getLastKnownLocation(provider) }
+                .maxByOrNull { it.time }
+        }.getOrNull()
+        if (location == null) scope.launch { snackbar.showSnackbar("El teléfono no tiene una ubicación reciente disponible.") }
+        else vm.suggestFairNear(location.latitude, location.longitude)
+    }
+    val locationPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { permissions ->
+        if (permissions.values.any { it }) suggestFromLastKnownLocation()
+        else scope.launch { snackbar.showSnackbar("Sin ubicación, puedes registrar la venta manualmente.") }
+    }
     var showRegister by rememberSaveable { mutableStateOf(initialProduct != null) }
     var selectedProductId by rememberSaveable { mutableStateOf(initialProduct?.id.orEmpty()) }
     var selectedVariantId by rememberSaveable { mutableStateOf("") }
@@ -78,6 +102,9 @@ fun SalesScreen(
         selectedProductId = initialProduct?.id.orEmpty()
         selectedVariantId = initialProduct?.variants?.firstOrNull()?.id.orEmpty()
         showRegister = initialProduct != null
+    }
+    LaunchedEffect(state.salesHistoryEnabled) {
+        saveHistory = state.salesHistoryEnabled
     }
     LaunchedEffect(state.message, state.error) {
         val feedback = state.message ?: state.error
@@ -105,6 +132,15 @@ fun SalesScreen(
 
     val selectedProduct = state.products.firstOrNull { it.id == selectedProductId }
     val selectedVariant = selectedProduct?.variants?.firstOrNull { it.id == selectedVariantId }
+    val saleQuantity = quantity.toIntOrNull() ?: 0
+    val selectedUnitPrice = selectedVariant?.price ?: selectedProduct?.price ?: 0L
+    val insufficientStock = selectedProduct?.let { product ->
+        val availableStock = selectedVariant?.stock ?: product.stock
+        val mayRegisterAsOrder = product.exhaustedBehavior == "A pedido" && availableStock == 0
+        product.managesStock && (
+            saleQuantity <= 0 || (availableStock < saleQuantity && !mayRegisterAsOrder)
+        )
+    } ?: false
 
     Scaffold(
         topBar = {
@@ -126,11 +162,11 @@ fun SalesScreen(
                 } else {
                     ChoiceField(
                         "Producto",
-                        selectedProduct?.name ?: "Seleccionar producto",
-                        state.products.map { it.name },
+                        selectedProduct?.let(::productChoiceLabel) ?: "Seleccionar producto",
+                        state.products.map(::productChoiceLabel),
                         enabled = !state.busy,
-                    ) { name ->
-                        selectedProductId = state.products.firstOrNull { it.name == name }?.id.orEmpty()
+                    ) { label ->
+                        selectedProductId = state.products.firstOrNull { productChoiceLabel(it) == label }?.id.orEmpty()
                         selectedVariantId = ""
                     }
                     if (selectedProduct?.variants?.isNotEmpty() == true) {
@@ -142,6 +178,19 @@ fun SalesScreen(
                         ) { name ->
                             selectedVariantId = selectedProduct.variants.firstOrNull { it.name == name }?.id.orEmpty()
                         }
+                    }
+                    if (selectedProduct?.managesStock == true) {
+                        val availableStock = selectedVariant?.stock ?: selectedProduct.stock
+                        Text("Stock disponible: $availableStock")
+                    }
+                    if (selectedProduct != null && saleQuantity > 0) {
+                        Text("Total de esta venta: ${formatClp(selectedUnitPrice * saleQuantity)}")
+                    }
+                    if (insufficientStock) {
+                        Text(
+                            "La cantidad supera el stock disponible o no es válida.",
+                            color = MaterialTheme.colorScheme.error,
+                        )
                     }
                     OutlinedTextField(
                         value = quantity,
@@ -164,9 +213,32 @@ fun SalesScreen(
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(checked = saveHistory, onCheckedChange = { saveHistory = it })
-                        Text("Guardar esta venta en el historial")
+                    OutlinedButton(
+                        onClick = {
+                            val fine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+                            val coarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+                            if (fine || coarse) suggestFromLastKnownLocation()
+                            else locationPermission.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+                        },
+                        enabled = !state.busy,
+                    ) { Text("Sugerir feria por ubicación (opcional)") }
+                    (state.locationSuggestedFairName ?: state.suggestedFairName)?.let { fairName ->
+                        Text("Tienes participación confirmada en una feria de hoy.")
+                        TextButton(
+                            onClick = {
+                                placeType = "feria"
+                                placeName = fairName
+                            },
+                            enabled = !state.busy,
+                        ) { Text("Usar feria: $fairName") }
+                    }
+                    if (state.salesHistoryEnabled) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(checked = saveHistory, onCheckedChange = { saveHistory = it })
+                            Text("Guardar esta venta en el historial")
+                        }
+                    } else {
+                        Text("El historial está desactivado en la configuración de tu tienda.")
                     }
                     Button(
                         onClick = {
@@ -182,7 +254,8 @@ fun SalesScreen(
                                 ),
                             )
                         },
-                        enabled = !state.busy && selectedProduct != null,
+                        enabled = !state.busy && selectedProduct != null && saleQuantity > 0 &&
+                            !insufficientStock && (placeType != "feria" || placeName.isNotBlank()),
                         modifier = Modifier.fillMaxWidth().height(52.dp),
                     ) { Text(if (state.busy) "Guardando…" else "Registrar venta") }
                 }
@@ -196,8 +269,9 @@ fun SalesScreen(
                 }
             }
 
-            Text("Historial", style = MaterialTheme.typography.titleLarge)
-            ChoiceField(
+            if (state.salesHistoryEnabled) {
+                Text("Historial", style = MaterialTheme.typography.titleLarge)
+                ChoiceField(
                 "Filtrar por producto",
                 state.products.firstOrNull { it.id == filterProductId }?.name ?: "Todos los productos",
                 listOf("Todos los productos") + state.products.map { it.name },
@@ -243,13 +317,15 @@ fun SalesScreen(
                 filterProductId = ""
             }) { Text("Limpiar filtros") }
 
+            val startBoundary = startMillis?.let { pickerDateBounds(it).first }
+            val endBoundary = endMillis?.let { pickerDateBounds(it).second }
             val visibleSales = state.sales.filter { sale ->
                 val productMatches = filterProductId.isBlank() || sale.productId == filterProductId
                 val placeMatches = filterPlaceType.isBlank() || sale.placeType == filterPlaceType
                 val fairMatches = filterFairName.isBlank() || sale.placeName == filterFairName
                 val time = sale.soldAt?.toDate()?.time
-                val startMatches = startMillis == null || (time != null && time >= startMillis!!)
-                val endMatches = endMillis == null || (time != null && time < endMillis!! + MILLIS_PER_DAY)
+                val startMatches = startBoundary == null || (time != null && time >= startBoundary)
+                val endMatches = endBoundary == null || (time != null && time < endBoundary)
                 productMatches && placeMatches && fairMatches && startMatches && endMatches
             }
             if (state.loading && state.sales.isEmpty()) {
@@ -259,14 +335,27 @@ fun SalesScreen(
             } else {
                 visibleSales.forEach { sale -> SaleCard(sale) }
             }
+            }
         }
     }
 }
 
+private fun productChoiceLabel(product: Product): String =
+    "${product.name} · ${product.id.takeLast(4)}"
+
 private const val MILLIS_PER_DAY = 86_400_000L
 
 private fun dateLabel(millis: Long): String =
-    DateFormat.getDateInstance(DateFormat.SHORT).format(Date(millis))
+    java.time.format.DateTimeFormatter.ofLocalizedDate(java.time.format.FormatStyle.SHORT)
+        .withLocale(java.util.Locale.getDefault())
+        .format(java.time.LocalDate.ofEpochDay(Math.floorDiv(millis, MILLIS_PER_DAY)))
+
+private fun pickerDateBounds(millis: Long): Pair<Long, Long> {
+    val date = java.time.LocalDate.ofEpochDay(Math.floorDiv(millis, MILLIS_PER_DAY))
+    val zone = java.time.ZoneId.systemDefault()
+    return date.atStartOfDay(zone).toInstant().toEpochMilli() to
+        date.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+}
 
 @Composable
 private fun SaleCard(sale: Sale) {

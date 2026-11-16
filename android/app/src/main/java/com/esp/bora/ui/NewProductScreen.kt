@@ -212,6 +212,40 @@ fun NewProductScreen(
                 enabled = !state.saving,
                 modifier = Modifier.fillMaxWidth(),
             )
+            Text("Datos específicos de ${state.productType}", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Agrega aquí los datos acordados para este tipo de producto. Se mostrarán en la ficha del producto.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            state.typeFields.forEach { field ->
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = field.label,
+                            onValueChange = { vm.updateTypeFieldLabel(field.id, it) },
+                            label = { Text("Nombre del dato (por ejemplo, material o tamaño)") },
+                            singleLine = true,
+                            enabled = !state.saving,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        OutlinedTextField(
+                            value = field.value,
+                            onValueChange = { vm.updateTypeFieldValue(field.id, it) },
+                            label = { Text(field.label.ifBlank { "Valor" }) },
+                            singleLine = true,
+                            enabled = !state.saving,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        TextButton(onClick = { vm.removeTypeField(field.id) }, enabled = !state.saving) {
+                            Text("Quitar dato")
+                        }
+                    }
+                }
+            }
+            OutlinedButton(onClick = vm::addTypeField, enabled = !state.saving, modifier = Modifier.fillMaxWidth()) {
+                Text("Agregar dato específico")
+            }
             DropdownChoice(
                 label = "Modalidad",
                 selected = state.modality,

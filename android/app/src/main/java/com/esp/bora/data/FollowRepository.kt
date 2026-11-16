@@ -48,16 +48,97 @@ class FollowRepository(
             }
             return
         }
+        val existingFollow = follow.get().await()
+        val effectiveNotifications = notificationsEnabled ||
+            existingFollow.getBoolean("notificationsEnabled") == true
         follow.set(
             mapOf(
                 "targetId" to storeId,
                 "targetType" to "store",
-                "notificationsEnabled" to notificationsEnabled,
+                "notificationsEnabled" to effectiveNotifications,
                 "createdAt" to FieldValue.serverTimestamp(),
                 "updatedAt" to FieldValue.serverTimestamp(),
             ),
         ).await()
-        if (notificationsEnabled) registerCurrentDevice(uid)
+        if (effectiveNotifications) registerCurrentDevice(uid)
+    }
+
+    fun observeFollowedAssociations(uid: String): Flow<Set<String>> = callbackFlow {
+        val registration = db.collection("users").document(uid).collection("follows")
+            .whereEqualTo("targetType", "association")
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    close(error)
+                    return@addSnapshotListener
+                }
+                trySend(snapshot?.documents.orEmpty().mapNotNull { it.getString("targetId") }.toSet())
+            }
+        awaitClose { registration.remove() }
+    }
+
+    fun observeAssociationNotifications(uid: String): Flow<Set<String>> = callbackFlow {
+        val registration = db.collection("users").document(uid).collection("follows")
+            .whereEqualTo("targetType", "association")
+            .whereEqualTo("notificationsEnabled", true)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    close(error)
+                    return@addSnapshotListener
+                }
+                trySend(snapshot?.documents.orEmpty().mapNotNull { it.getString("targetId") }.toSet())
+            }
+        awaitClose { registration.remove() }
+    }
+
+    suspend fun setAssociationFollow(
+        uid: String,
+        associationId: String,
+        following: Boolean,
+        notificationsEnabled: Boolean,
+    ) {
+        require(auth.currentUser?.uid == uid) { "Inicia sesión para seguir una asociación." }
+        require(associationId.isNotBlank())
+        val follow = db.collection("users").document(uid).collection("follows")
+            .document("association_$associationId")
+        if (!following) {
+            follow.delete().await()
+            val remainingAlerts = db.collection("users").document(uid).collection("follows")
+                .whereEqualTo("notificationsEnabled", true)
+                .limit(1)
+                .get()
+                .await()
+            if (remainingAlerts.isEmpty) {
+                val devices = db.collection("users").document(uid).collection("devices").get().await()
+                devices.documents.chunked(400).forEach { page ->
+                    db.batch().apply { page.forEach { delete(it.reference) } }.commit().await()
+                }
+            }
+            return
+        }
+        val existingFollow = follow.get().await()
+        val effectiveNotifications = notificationsEnabled ||
+            existingFollow.getBoolean("notificationsEnabled") == true
+        follow.set(
+            mapOf(
+                "targetId" to associationId,
+                "targetType" to "association",
+                "notificationsEnabled" to effectiveNotifications,
+                "createdAt" to FieldValue.serverTimestamp(),
+                "updatedAt" to FieldValue.serverTimestamp(),
+            ),
+        ).await()
+        if (effectiveNotifications) registerCurrentDevice(uid)
+    }
+
+    suspend fun setAssociationNotifications(uid: String, associationId: String, enabled: Boolean) {
+        require(auth.currentUser?.uid == uid)
+        val follow = db.collection("users").document(uid).collection("follows")
+            .document("association_$associationId")
+        require(follow.get().await().exists()) { "Primero sigue esta asociación." }
+        follow.update(
+            mapOf("notificationsEnabled" to enabled, "updatedAt" to FieldValue.serverTimestamp()),
+        ).await()
+        if (enabled) registerCurrentDevice(uid)
     }
 
     suspend fun registerCurrentDevice(uid: String) {
@@ -67,7 +148,9 @@ class FollowRepository(
 
     suspend fun registerTokenIfOptedIn(uid: String, token: String) {
         require(auth.currentUser?.uid == uid)
-        val optedIn = db.collection("users").document(uid).collection("follows")
+        val user = db.collection("users").document(uid).get().await()
+        val isEntrepreneur = user.getString("role") == "emprendedora" && user.getBoolean("active") != false
+        val optedIn = if (isEntrepreneur) true else db.collection("users").document(uid).collection("follows")
             .whereEqualTo("notificationsEnabled", true)
             .limit(1)
             .get()

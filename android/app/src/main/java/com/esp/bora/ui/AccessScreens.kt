@@ -43,6 +43,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun AccountModeScreen(
     onChoose: (AccountMode) -> Unit,
+    onExploreAnonymously: (() -> Unit)? = null,
+    message: String? = null,
 ) {
     Column(
         Modifier.fillMaxSize().systemBarsPadding().padding(24.dp),
@@ -56,6 +58,10 @@ fun AccountModeScreen(
         )
         Spacer(Modifier.height(16.dp))
         Text("¿Cómo quieres usar BORA?", style = MaterialTheme.typography.headlineSmall)
+        message?.let {
+            Spacer(Modifier.height(8.dp))
+            Text(it, color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center)
+        }
         Spacer(Modifier.height(24.dp))
         Button(onClick = { onChoose(AccountMode.BUYER) }, modifier = Modifier.fillMaxWidth().height(56.dp)) {
             Text("Explorar como comprador")
@@ -67,6 +73,12 @@ fun AccountModeScreen(
         ) {
             Text("Entrar a mi tienda")
         }
+        onExploreAnonymously?.let { onExplore ->
+            Spacer(Modifier.height(12.dp))
+            TextButton(onClick = onExplore, modifier = Modifier.fillMaxWidth().height(52.dp)) {
+                Text("Explorar sin iniciar sesión")
+            }
+        }
         Spacer(Modifier.height(12.dp))
         Text(
             "Puedes cambiar de modo cerrando sesión.",
@@ -74,6 +86,40 @@ fun AccountModeScreen(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
         )
+    }
+}
+
+@Composable
+fun AnonymousAccessPrompt(
+    onSignIn: () -> Unit,
+    onSkip: () -> Unit,
+) {
+    Column(
+        Modifier.fillMaxSize().systemBarsPadding().padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Image(
+            painter = painterResource(R.drawable.logo_bora),
+            contentDescription = "BORA",
+            modifier = Modifier.width(220.dp),
+        )
+        Spacer(Modifier.height(20.dp))
+        Text("Explora BORA", style = MaterialTheme.typography.headlineSmall)
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "Inicia sesión para seguir tiendas y recibir avisos. También puedes continuar sin cuenta.",
+            textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(24.dp))
+        Button(onClick = onSignIn, modifier = Modifier.fillMaxWidth().height(52.dp)) {
+            Text("Iniciar sesión")
+        }
+        Spacer(Modifier.height(8.dp))
+        OutlinedButton(onClick = onSkip, modifier = Modifier.fillMaxWidth().height(52.dp)) {
+            Text("Omitir y explorar")
+        }
     }
 }
 

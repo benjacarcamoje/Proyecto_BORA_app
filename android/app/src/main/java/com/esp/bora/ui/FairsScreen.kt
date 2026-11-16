@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -54,6 +55,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
 
 data class FairsUiState(
     val loading: Boolean = true,
@@ -122,6 +124,7 @@ fun FairsScreen(
     val snackbar = remember { SnackbarHostState() }
     val context = LocalContext.current
     var deviceLocation by remember { mutableStateOf<Location?>(null) }
+    var detailFair by remember { mutableStateOf<Fair?>(null) }
     val locationPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) { result ->
@@ -149,6 +152,18 @@ fun FairsScreen(
         }
     }
 
+    detailFair?.let { fair ->
+        FairPublicDetailsDialog(
+            fair = fair,
+            onDismiss = { detailFair = null },
+            onDirections = {
+                val query = Uri.encode("${fair.latitude},${fair.longitude} ${fair.address}")
+                runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=" + query))) }
+                    .onFailure { vm.reportError("No se encontró una aplicación de mapas en este teléfono.") }
+            },
+        )
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -168,6 +183,7 @@ fun FairsScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 item {
+                    FairOverviewMap(fairs = orderedFairs, userLocation = deviceLocation)
                     TextButton(onClick = {
                         val fine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
                         val coarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
@@ -196,6 +212,7 @@ fun FairsScreen(
                     FairCard(
                         fair = fair,
                         invitation = invitation,
+                        onDetails = { detailFair = fair },
                         onRespond = { response -> vm.respond(fair.id, response) },
                         onDirections = {
                             val query = Uri.encode("${fair.latitude},${fair.longitude} ${fair.address}")
@@ -214,6 +231,7 @@ fun FairsScreen(
 private fun FairCard(
     fair: Fair,
     invitation: FairInvitation?,
+    onDetails: () -> Unit,
     onRespond: (String) -> Unit,
     onDirections: () -> Unit,
 ) {
@@ -233,9 +251,188 @@ private fun FairCard(
                     }
                 }
             }
+            TextButton(onClick = onDetails) { Text("Ver ficha y mapa") }
             TextButton(onClick = onDirections) { Text("Cómo llegar") }
         }
     }
+}
+
+@Composable
+private fun FairOverviewMap(fairs: List<Fair>, userLocation: Location?) {
+    if (fairs.isEmpty()) return
+    val points = org.json.JSONArray().apply {
+        fairs.forEach { fair ->
+            put(org.json.JSONObject().put("lat", fair.latitude).put("lon", fair.longitude).put("name", fair.name))
+        }
+    }.toString().replace("</", "<\\/")
+    val user = userLocation?.let { "[${it.latitude},${it.longitude}]" } ?: "null"
+    val center = userLocation?.let { "[${it.latitude},${it.longitude}]" }
+        ?: "[${fairs.first().latitude},${fairs.first().longitude}]"
+    val html = """
+        <!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
+        <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+        <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+        <style>html,body,#map{height:100%;margin:0}</style></head><body><div id="map"></div>
+        <script>
+          var fairs = $points;
+          var user = $user;
+          var map = L.map('map').setView($center, 12);
+          L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19, attribution: '&copy; OpenStreetMap'
+          }).addTo(map);
+          fairs.forEach(function(point) {
+            var marker = L.marker([point.lat, point.lon]).addTo(map);
+            var label = document.createElement('span'); label.textContent = point.name;
+            marker.bindPopup(label);
+          });
+          if (user) L.circleMarker(user, {radius:8,color:'#176b50'}).addTo(map).bindPopup('Tu ubicación');
+        </script></body></html>
+    """.trimIndent()
+    androidx.compose.ui.viewinterop.AndroidView(
+        modifier = Modifier.fillMaxWidth().height(240.dp),
+        factory = { viewContext ->
+            android.webkit.WebView(viewContext).apply {
+                settings.javaScriptEnabled = true
+                settings.domStorageEnabled = true
+                loadDataWithBaseURL("https://www.openstreetmap.org", html, "text/html", "UTF-8", null)
+            }
+        },
+        update = { webView -> if (webView.tag != html.hashCode()) { webView.tag = html.hashCode(); webView.loadDataWithBaseURL("https://www.openstreetmap.org", html, "text/html", "UTF-8", null) } },
+    )
+}
+
+private data class FairPublicVendor(val uid: String, val name: String, val storeId: String, val products: List<com.esp.bora.data.Product>)
+
+@Composable
+private fun FairPublicDetailsDialog(
+    fair: Fair,
+    onDismiss: () -> Unit,
+    onDirections: () -> Unit,
+) {
+    val context = LocalContext.current
+    val db = remember { com.google.firebase.firestore.FirebaseFirestore.getInstance() }
+    val scope = rememberCoroutineScope()
+    var vendors by remember(fair.id) { mutableStateOf<List<FairPublicVendor>>(emptyList()) }
+    var loading by remember(fair.id) { mutableStateOf(true) }
+    var qrVisible by remember { mutableStateOf(false) }
+
+    LaunchedEffect(fair.id) {
+        runCatching {
+            val participantDocs = db.collection("fairs").document(fair.id).collection("participants")
+                .whereEqualTo("status", "confirmada").get().await().documents
+            val allProducts = db.collection("products").get().await().documents
+                .mapNotNull { document -> document.toObject(com.esp.bora.data.Product::class.java)?.copy(id = document.id) }
+                .filter { it.visibleInPublicCatalog }
+            participantDocs.map { participant ->
+                val uid = participant.id
+                val stores = db.collection("stores").whereEqualTo("ownerUid", uid).limit(1).get().await()
+                val storeId = stores.documents.firstOrNull()?.id ?: uid
+                FairPublicVendor(
+                    uid = uid,
+                    name = participant.getString("entrepreneurName").orEmpty(),
+                    storeId = storeId,
+                    products = allProducts.filter { it.storeId == storeId }.take(4),
+                )
+            }
+        }.onSuccess { vendors = it }
+        loading = false
+    }
+
+    if (qrVisible) {
+        val url = "https://bora-database.web.app/?fair=" + Uri.encode(fair.id)
+        QrDialog(
+            title = fair.name,
+            url = url,
+            onDismiss = { qrVisible = false },
+            onSave = { bitmap ->
+                runCatching {
+                    val folder = java.io.File(context.filesDir, "qr").apply { mkdirs() }
+                    java.io.FileOutputStream(java.io.File(folder, "feria_" + fair.id + ".png")).use {
+                        bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+                    }
+                }
+            },
+            onShare = { bitmap ->
+                runCatching {
+                    val folder = java.io.File(context.filesDir, "qr").apply { mkdirs() }
+                    val file = java.io.File(folder, "feria_" + fair.id + ".png")
+                    java.io.FileOutputStream(file).use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+                    val uri = androidx.core.content.FileProvider.getUriForFile(context, context.packageName + ".fileprovider", file)
+                    val send = Intent(Intent.ACTION_SEND).apply {
+                        type = "image/png"
+                        putExtra(Intent.EXTRA_STREAM, uri)
+                        putExtra(Intent.EXTRA_TEXT, fair.name + " · " + url)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    context.startActivity(Intent.createChooser(send, "Compartir código QR"))
+                }
+            },
+        )
+    }
+
+    if (!qrVisible) AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(fair.name) },
+        text = {
+            Column(
+                Modifier.fillMaxWidth().heightIn(max = 560.dp).verticalScroll(androidx.compose.foundation.rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                if (fair.description.isNotBlank()) Text(fair.description)
+                Text(fair.address)
+                Text("Fecha: " + (fair.startsAt?.let(::formatFairDate) ?: "Por confirmar"))
+                Text("Organiza: " + fair.organizer)
+                FairMapPreview(fair)
+                TextButton(onClick = onDirections) { Text("Cómo llegar") }
+                Text("Participantes confirmados", style = MaterialTheme.typography.titleMedium)
+                if (loading) CircularProgressIndicator()
+                else if (vendors.isEmpty()) Text("Aún no hay participantes confirmados.")
+                vendors.forEach { vendor ->
+                    Text(vendor.name, style = MaterialTheme.typography.titleSmall)
+                    vendor.products.forEach { product ->
+                        Text("• " + product.name + if (product.isSoldOut) " · Agotado" else "")
+                    }
+                    if (vendor.products.isEmpty()) Text("Todavía no hay productos públicos.")
+                }
+            }
+        },
+        confirmButton = {
+            Row {
+                TextButton(onClick = {
+                    val url = "https://bora-database.web.app/?fair=" + Uri.encode(fair.id)
+                    val send = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_TEXT, fair.name + " · " + url)
+                    }
+                    context.startActivity(Intent.createChooser(send, "Compartir feria"))
+                }) { Text("Compartir") }
+                TextButton(onClick = { qrVisible = true }) { Text("Código QR") }
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cerrar") } },
+    )
+}
+
+@Composable
+private fun FairMapPreview(fair: Fair) {
+    val context = LocalContext.current
+    val lat = fair.latitude
+    val lon = fair.longitude
+    val margin = 0.01
+    val mapUrl = "https://www.openstreetmap.org/export/embed.html?bbox=" +
+        "${lon - margin}%2C${lat - margin}%2C${lon + margin}%2C${lat + margin}" +
+        "&layer=mapnik&marker=$lat%2C$lon"
+    androidx.compose.ui.viewinterop.AndroidView(
+        modifier = Modifier.fillMaxWidth().height(220.dp),
+        factory = { viewContext ->
+            android.webkit.WebView(viewContext).apply {
+                settings.javaScriptEnabled = true
+                settings.domStorageEnabled = true
+                loadUrl(mapUrl)
+            }
+        },
+        update = { view -> if (view.url != mapUrl) view.loadUrl(mapUrl) },
+    )
 }
 
 private fun distanceMeters(from: Location, fair: Fair): Float {

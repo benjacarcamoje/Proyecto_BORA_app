@@ -14,6 +14,7 @@ import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.esp.bora.data.AccountMode
+import com.esp.bora.data.BiometricPreferences
 import com.esp.bora.data.Product
 import kotlinx.coroutines.launch
 
@@ -24,6 +25,12 @@ fun BoraApp(
 ) {
     val auth by authVm.state.collectAsStateWithLifecycle()
     val biometricAvailable = remember(activity) { Biometrics.isAvailable(activity) }
+    var biometricEnabled by rememberSaveable(auth.uid) {
+        mutableStateOf(auth.uid?.let { BiometricPreferences.isEnabled(activity, it) } ?: false)
+    }
+    LaunchedEffect(auth.uid) {
+        biometricEnabled = auth.uid?.let { BiometricPreferences.isEnabled(activity, it) } ?: false
+    }
     val credentialManager = remember(activity) { CredentialManager.create(activity) }
     val scope = rememberCoroutineScope()
     val signOut: () -> Unit = {
@@ -34,28 +41,76 @@ fun BoraApp(
         Unit
     }
     val uid = auth.uid
+    val onBiometricEnabledChange: (Boolean) -> Unit = { enabled ->
+        val accountUid = uid
+        if (!enabled) {
+            if (accountUid != null) BiometricPreferences.setEnabled(activity, accountUid, false)
+            biometricEnabled = false
+        } else if (accountUid != null && biometricAvailable) {
+            Biometrics.authenticate(
+                activity = activity,
+                onSuccess = {
+                    BiometricPreferences.setEnabled(activity, accountUid, true)
+                    biometricEnabled = true
+                },
+                onUsePassword = {},
+                onError = {},
+                promptTitle = "Activar acceso con huella",
+                promptSubtitle = "Confirma tu huella para activar el acceso rápido",
+                negativeButtonText = "Cancelar",
+            )
+        }
+    }
 
     LaunchedEffect(uid, auth.mode) {
         if (uid != null && auth.mode == null) authVm.signOut()
     }
 
     when {
-        uid == null && auth.selectedMode == null -> AccountModeScreen(authVm::selectMode)
+        uid == null && auth.policyLoading -> AccessPolicyLoadingScreen()
+        uid == null && auth.guest -> BuyerHomeHost(
+            uid = null,
+            email = null,
+            onSignOut = authVm::leaveGuest,
+            onRequestSignIn = authVm::requestSignInForFollow,
+        )
+        uid == null && auth.anonymousNavigation == "prompt" && !auth.promptSeen -> AnonymousAccessPrompt(
+            onSignIn = authVm::acknowledgeAnonymousPrompt,
+            onSkip = authVm::enterGuest,
+        )
+        uid == null && auth.selectedMode == null -> AccountModeScreen(
+            onChoose = authVm::selectMode,
+            onExploreAnonymously = if (auth.anonymousNavigation == "allow") authVm::enterGuest else null,
+            message = auth.policyError,
+        )
         uid == null && auth.selectedMode == AccountMode.BUYER -> BuyerSignInScreen(
             activity = activity,
             busy = auth.busy,
-            error = auth.error,
+            error = auth.error ?: auth.policyError,
             onGoogleToken = authVm::signInBuyerWithGoogle,
             onBack = authVm::backToModeSelection,
         )
         uid == null -> LoginScreen(
             busy = auth.busy,
-            error = auth.error,
+            error = auth.error ?: auth.policyError,
+            resetBusy = auth.resetBusy,
+            resetMessage = auth.resetMessage,
+            resetError = auth.resetError,
             onSignIn = authVm::signInEntrepreneur,
+            onResetPassword = authVm::sendPasswordReset,
+            onClearResetFeedback = authVm::clearPasswordResetFeedback,
             onBackToModes = authVm::backToModeSelection,
         )
-        auth.mode == AccountMode.BUYER -> BuyerHomeHost(uid, auth.email, signOut)
-        auth.mode == AccountMode.ENTREPRENEUR && !auth.unlocked && biometricAvailable -> {
+        auth.mode == AccountMode.ADMIN -> AdminScreen(onSignOut = signOut)
+        auth.mode == AccountMode.BUYER -> BuyerHomeHost(
+            uid = uid,
+            email = auth.email,
+            onSignOut = signOut,
+            onRequestSignIn = authVm::requestSignInForFollow,
+            pendingFollowStoreId = auth.pendingFollowStoreId,
+            onPendingFollowHandled = authVm::completePendingFollow,
+        )
+        auth.mode == AccountMode.ENTREPRENEUR && !auth.unlocked && biometricAvailable && biometricEnabled -> {
             val askFingerprint = {
                 Biometrics.authenticate(
                     activity = activity,
@@ -77,29 +132,87 @@ fun BoraApp(
                 onUsePassword = signOut,
             )
         }
-        auth.mode == AccountMode.ENTREPRENEUR -> HomeHost(uid = uid, onSignOut = signOut)
+        auth.mode == AccountMode.ENTREPRENEUR -> HomeHost(
+            uid = uid,
+            onSignOut = signOut,
+            biometricAvailable = biometricAvailable,
+            biometricEnabled = biometricEnabled,
+            onBiometricEnabledChange = onBiometricEnabledChange,
+        )
         else -> AccountModeScreen(authVm::selectMode)
     }
 }
 
 @Composable
-private fun BuyerHomeHost(uid: String, email: String?, onSignOut: () -> Unit) {
+private fun BuyerHomeHost(
+    uid: String?,
+    email: String?,
+    onSignOut: () -> Unit,
+    onRequestSignIn: (String) -> Unit,
+    pendingFollowStoreId: String? = null,
+    onPendingFollowHandled: (String) -> Unit = {},
+) {
     var page by rememberSaveable { mutableStateOf("catalog") }
-    if (page == "fairs") {
-        FairsScreen(uid = uid, onBack = { page = "catalog" })
-    } else {
-        BuyerCatalogScreen(uid = uid, email = email, onSignOut = onSignOut, onFairs = { page = "fairs" })
+    LaunchedEffect(pendingFollowStoreId) {
+        if (pendingFollowStoreId?.startsWith("association:") == true) page = "directory"
+    }
+    when (page) {
+        "fairs" -> FairsScreen(uid = uid, onBack = { page = "catalog" })
+        "directory" -> PublicDirectoryScreen(
+            uid = uid,
+            onBack = { page = "catalog" },
+            onRequestSignIn = onRequestSignIn,
+            pendingAssociationId = pendingFollowStoreId?.takeIf { it.startsWith("association:") }?.removePrefix("association:"),
+            onPendingFollowHandled = onPendingFollowHandled,
+        )
+        else -> BuyerCatalogScreen(
+            uid = uid,
+            email = email,
+            onSignOut = onSignOut,
+            onFairs = { page = "fairs" },
+            onDirectory = { page = "directory" },
+            onRequestSignIn = onRequestSignIn,
+            pendingFollowStoreId = pendingFollowStoreId,
+            onPendingFollowHandled = onPendingFollowHandled,
+        )
     }
 }
 
 @Composable
-private fun HomeHost(uid: String, onSignOut: () -> Unit) {
+private fun AccessPolicyLoadingScreen() {
+    androidx.compose.foundation.layout.Box(
+        Modifier.fillMaxSize(),
+        contentAlignment = androidx.compose.ui.Alignment.Center,
+    ) {
+        androidx.compose.foundation.layout.Column(horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
+            androidx.compose.material3.CircularProgressIndicator()
+            androidx.compose.foundation.layout.Spacer(Modifier.height(16.dp))
+            androidx.compose.material3.Text("Cargando configuración de acceso…")
+        }
+    }
+}
+
+@Composable
+private fun HomeHost(
+    uid: String,
+    onSignOut: () -> Unit,
+    biometricAvailable: Boolean,
+    biometricEnabled: Boolean,
+    onBiometricEnabledChange: (Boolean) -> Unit,
+) {
     var page by rememberSaveable { mutableStateOf("products") }
     var editingProduct by remember { mutableStateOf<Product?>(null) }
     var saleProduct by remember { mutableStateOf<Product?>(null) }
     var message by rememberSaveable { mutableStateOf<String?>(null) }
 
     when (page) {
+        "store_settings" -> StoreSettingsScreen(
+            uid = uid,
+            onBack = { page = "products" },
+            biometricAvailable = biometricAvailable,
+            biometricEnabled = biometricEnabled,
+            onBiometricEnabledChange = onBiometricEnabledChange,
+        )
         "editor" -> NewProductScreen(
             product = editingProduct,
             onClose = { saved ->
@@ -136,6 +249,7 @@ private fun HomeHost(uid: String, onSignOut: () -> Unit) {
             onSales = { page = "sales" },
             onFairs = { page = "fairs" },
             onSignOut = onSignOut,
+            onStoreSettings = { page = "store_settings" },
         )
     }
 }

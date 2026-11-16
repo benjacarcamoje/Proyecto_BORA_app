@@ -18,7 +18,8 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return hasProfile() && profile(request.auth.uid).role == 'admin';
+      return hasProfile() && profile(request.auth.uid).role == 'admin'
+        && profile(request.auth.uid).active != false;
     }
 
     function isEntrepreneur() {
@@ -64,7 +65,7 @@ service cloud.firestore {
       return data.keys().hasOnly([
           'storeId', 'ownerUid', 'name', 'description', 'price', 'imageUrl', 'imagePath',
           'category', 'productType', 'modality', 'managesStock', 'stock', 'exhaustedBehavior',
-          'available', 'sold', 'variants', 'createdAt', 'updatedAt'
+          'available', 'sold', 'variants', 'typeSpecificFields', 'createdAt', 'updatedAt'
         ])
         && data.keys().hasAll([
           'storeId', 'ownerUid', 'name', 'description', 'price', 'imageUrl', 'imagePath',
@@ -89,6 +90,8 @@ service cloud.firestore {
         && data.stock is int && data.stock >= 0 && data.stock <= 100000
         && data.exhaustedBehavior in ['Mostrar agotado', 'Ocultar', 'A pedido']
         && data.available is bool && data.sold is bool
+        && (!data.keys().hasAny(['typeSpecificFields'])
+          || (data.typeSpecificFields is map && data.typeSpecificFields.size() <= 20))
         && validVariants(data)
         && data.createdAt is timestamp && data.updatedAt is timestamp
         && data.updatedAt == request.time;
@@ -119,9 +122,77 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/products/$(data.productId)).data.ownerUid == request.auth.uid;
     }
 
+    function validStoreProfile(data) {
+      return data.keys().hasOnly([
+          'ownerUid', 'name', 'logoUrl', 'logoPath', 'description', 'businessType', 'sector',
+          'contactMode', 'whatsappPublic', 'showPrices', 'pickupAddress', 'pickupLatitude',
+          'pickupLongitude', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasAll([
+          'ownerUid', 'name', 'logoUrl', 'logoPath', 'description', 'businessType', 'sector',
+          'contactMode', 'whatsappPublic', 'showPrices', 'createdAt', 'updatedAt'
+        ])
+        && data.ownerUid == request.auth.uid
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 100
+        && data.logoUrl is string && data.logoUrl.size() <= 2048
+        && (data.logoUrl == '' || validImageUrl(data.logoUrl))
+        && data.logoPath is string && data.logoPath.size() <= 512
+        && (data.logoPath == '' || data.logoPath.matches('^stores/' + request.auth.uid + '/logo/.*$'))
+        && data.description is string && data.description.size() <= 1000
+        && data.businessType is string && data.businessType.size() <= 100
+        && data.sector is string && data.sector.size() <= 100
+        && data.contactMode in ['whatsapp', 'form', 'both']
+        && data.whatsappPublic is string && data.whatsappPublic.size() <= 32
+        && data.showPrices is bool
+        && (!data.keys().hasAny(['pickupAddress']) || (data.pickupAddress is string && data.pickupAddress.size() <= 200))
+        && (!data.keys().hasAny(['pickupLatitude']) || (data.pickupLatitude is number && data.pickupLatitude >= -90 && data.pickupLatitude <= 90))
+        && (!data.keys().hasAny(['pickupLongitude']) || (data.pickupLongitude is number && data.pickupLongitude >= -180 && data.pickupLongitude <= 180))
+        && data.createdAt is timestamp && data.updatedAt is timestamp
+        && data.updatedAt == request.time;
+    }
+
+    function validStoreSettings(data) {
+      return data.keys().hasOnly([
+          'ownerUid', 'contactPhone', 'contactEmail', 'whatsapp', 'contactNotificationsEnabled',
+          'contactNotificationStartMinutes', 'contactNotificationEndMinutes', 'ratingsEnabled',
+          'salesHistoryEnabled', 'defaultProductCategory', 'defaultProductType', 'defaultProductModality',
+          'defaultProductManagesStock', 'defaultProductStock', 'defaultProductExhaustedBehavior',
+          'defaultProductAvailable', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasAll([
+          'ownerUid', 'contactPhone', 'contactEmail', 'whatsapp', 'contactNotificationsEnabled',
+          'contactNotificationStartMinutes', 'contactNotificationEndMinutes', 'ratingsEnabled',
+          'salesHistoryEnabled', 'defaultProductCategory', 'defaultProductType', 'defaultProductModality',
+          'defaultProductManagesStock', 'defaultProductStock', 'defaultProductExhaustedBehavior',
+          'defaultProductAvailable', 'createdAt', 'updatedAt'
+        ])
+        && data.ownerUid == request.auth.uid
+        && data.contactPhone is string && data.contactPhone.size() <= 32
+        && data.contactEmail is string && data.contactEmail.size() <= 254
+        && data.whatsapp is string && data.whatsapp.size() <= 32
+        && data.contactNotificationsEnabled is bool
+        && data.contactNotificationStartMinutes is int
+        && data.contactNotificationStartMinutes >= 0 && data.contactNotificationStartMinutes < 1440
+        && data.contactNotificationEndMinutes is int
+        && data.contactNotificationEndMinutes > data.contactNotificationStartMinutes
+        && data.contactNotificationEndMinutes < 1440
+        && data.ratingsEnabled is bool
+        && data.salesHistoryEnabled is bool
+        && data.defaultProductCategory is string && data.defaultProductCategory.size() <= 60
+        && data.defaultProductType is string && data.defaultProductType.size() <= 60
+        && data.defaultProductModality in ['Regular', 'A pedido', 'Pieza única']
+        && data.defaultProductManagesStock is bool
+        && data.defaultProductStock is int && data.defaultProductStock >= 0 && data.defaultProductStock <= 1000000
+        && data.defaultProductExhaustedBehavior in ['Mostrar agotado', 'Ocultar', 'A pedido']
+        && data.defaultProductAvailable is bool
+        && data.createdAt is timestamp && data.updatedAt is timestamp
+        && data.updatedAt == request.time;
+    }
+
     function validParticipant(data, participantUid) {
       return data.keys().hasOnly([
-          'entrepreneurUid', 'entrepreneurName', 'status', 'invitedBy', 'updatedAt'
+          'entrepreneurUid', 'entrepreneurName', 'status', 'invitedBy', 'updatedAt', 'attended',
+          'businessType', 'associationId', 'associationName'
         ])
         && data.keys().hasAll([
           'entrepreneurUid', 'entrepreneurName', 'status', 'invitedBy', 'updatedAt'
@@ -129,7 +200,11 @@ service cloud.firestore {
         && data.entrepreneurUid == participantUid
         && data.entrepreneurName is string && data.entrepreneurName.size() <= 100
         && data.status in ['invitada', 'confirmada', 'rechazada', 'agregada_admin']
-        && data.invitedBy is string && data.invitedBy == request.auth.uid
+        && data.invitedBy is string && data.invitedBy.size() > 0
+        && (!data.keys().hasAny(['attended']) || data.attended is bool)
+        && (!data.keys().hasAny(['businessType']) || (data.businessType is string && data.businessType.size() <= 60))
+        && (!data.keys().hasAny(['associationId']) || (data.associationId is string && data.associationId.size() <= 128))
+        && (!data.keys().hasAny(['associationName']) || (data.associationName is string && data.associationName.size() <= 100))
         && data.updatedAt is timestamp && data.updatedAt == request.time;
     }
 
@@ -181,7 +256,7 @@ service cloud.firestore {
 
       match /devices/{deviceId} {
         allow read: if request.auth.uid == uid || isAdmin();
-        allow create, update: if request.auth.uid == uid && isGoogleBuyer()
+        allow create, update: if request.auth.uid == uid && (isGoogleBuyer() || isEntrepreneur())
           && request.resource.data.keys().hasOnly(['token', 'updatedAt'])
           && request.resource.data.keys().hasAll(['token', 'updatedAt'])
           && request.resource.data.token is string
@@ -229,12 +304,17 @@ service cloud.firestore {
       match /participants/{participantUid} {
         allow read: if isAdmin()
           || (signedIn() && request.auth.uid == participantUid)
-          || (isEntrepreneur() && resource.data.entrepreneurUid == request.auth.uid);
+          || (isEntrepreneur() && resource.data.entrepreneurUid == request.auth.uid)
+          || (resource.data.status == 'confirmada'
+            && get(/databases/$(database)/documents/fairs/$(fairId)).data.published == true
+            && get(/databases/$(database)/documents/fairs/$(fairId)).data.cancelled == false);
         allow create: if isAdmin()
           && exists(/databases/$(database)/documents/fairs/$(fairId))
+          && request.resource.data.invitedBy == request.auth.uid
           && validParticipant(request.resource.data, participantUid);
         allow update: if (isAdmin()
             && request.resource.data.entrepreneurUid == resource.data.entrepreneurUid
+            && request.resource.data.invitedBy == resource.data.invitedBy
             && validParticipant(request.resource.data, participantUid))
           || (isEntrepreneur()
             && resource.data.entrepreneurUid == request.auth.uid
@@ -271,6 +351,80 @@ service cloud.firestore {
         && request.resource.data.createdAt is timestamp
         && request.resource.data.updatedAt == request.time;
       allow delete: if isAdmin();
+
+      match /members/{uid} {
+        allow read: if isAdmin() || get(/databases/$(database)/documents/associations/$(associationId)).data.active == true;
+        allow create, update: if isAdmin()
+          && request.resource.data.keys().hasOnly(['entrepreneurUid', 'entrepreneurName', 'businessType', 'addedAt'])
+          && request.resource.data.keys().hasAll(['entrepreneurUid', 'entrepreneurName', 'addedAt'])
+          && request.resource.data.entrepreneurUid == uid
+          && request.resource.data.entrepreneurName is string
+          && request.resource.data.entrepreneurName.size() <= 100
+          && (!request.resource.data.keys().hasAny(['businessType'])
+            || (request.resource.data.businessType is string && request.resource.data.businessType.size() <= 60))
+          && request.resource.data.addedAt is timestamp;
+        allow delete: if isAdmin();
+      }
+    }
+
+    // Política y catálogos no contienen datos privados; la app puede leerlos sin sesión.
+    match /stores/{storeId} {
+      // Estos campos son los que la emprendedora eligió publicar en su tienda.
+      allow read: if true;
+      allow create: if isEntrepreneur()
+        && request.resource.data.createdAt == request.time
+        && validStoreProfile(request.resource.data);
+      allow update: if isEntrepreneur()
+        && resource.data.ownerUid == request.auth.uid
+        && request.resource.data.ownerUid == resource.data.ownerUid
+        && request.resource.data.createdAt == resource.data.createdAt
+        && validStoreProfile(request.resource.data);
+      allow delete: if false;
+    }
+
+    match /storeSettings/{uid} {
+      allow read: if isEntrepreneur() && request.auth.uid == uid;
+      allow create: if isEntrepreneur()
+        && request.auth.uid == uid
+        && request.resource.data.createdAt == request.time
+        && validStoreSettings(request.resource.data);
+      allow update: if isEntrepreneur()
+        && request.auth.uid == uid
+        && resource.data.ownerUid == uid
+        && request.resource.data.ownerUid == uid
+        && request.resource.data.createdAt == resource.data.createdAt
+        && validStoreSettings(request.resource.data);
+      allow delete: if false;
+    }
+
+    match /storeContacts/{contactId} {
+      allow get, list: if isEntrepreneur()
+        && resource.data.ownerUid == request.auth.uid;
+      // Los mensajes se crean desde el flujo de contacto del backend.
+      allow create, update, delete: if false;
+    }
+
+    match /settings/{settingId} {
+      allow get: if settingId == 'app';
+      allow list: if false;
+      allow create, update: if isAdmin()
+        && settingId == 'app'
+        && request.resource.data.keys().hasOnly([
+          'anonymousNavigation', 'productTypes', 'categories', 'updatedAt', 'updatedBy'
+        ])
+        && request.resource.data.keys().hasAll([
+          'anonymousNavigation', 'productTypes', 'categories', 'updatedAt', 'updatedBy'
+        ])
+        && request.resource.data.anonymousNavigation in ['allow', 'prompt', 'require_login']
+        && request.resource.data.productTypes is list
+        && request.resource.data.productTypes.size() > 0
+        && request.resource.data.productTypes.size() <= 30
+        && request.resource.data.categories is list
+        && request.resource.data.categories.size() > 0
+        && request.resource.data.categories.size() <= 30
+        && request.resource.data.updatedAt is timestamp
+        && request.resource.data.updatedBy == request.auth.uid;
+      allow delete: if false;
     }
 
     match /adminAudit/{entryId} {

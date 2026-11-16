@@ -18,6 +18,9 @@ object Biometrics {
         onSuccess: () -> Unit,
         onUsePassword: () -> Unit,
         onError: (String) -> Unit,
+        promptTitle: String = "Ingresar a BORA",
+        promptSubtitle: String = "Confirma tu identidad con tu huella digital",
+        negativeButtonText: String = "Usar contraseña",
     ) {
         val callback = object : BiometricPrompt.AuthenticationCallback() {
             override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
@@ -38,10 +41,10 @@ object Biometrics {
         }
 
         val info = BiometricPrompt.PromptInfo.Builder()
-            .setTitle("Ingresar a BORA")
-            .setSubtitle("Confirma tu identidad con tu huella digital")
+            .setTitle(promptTitle)
+            .setSubtitle(promptSubtitle)
             .setAllowedAuthenticators(AUTHENTICATORS)
-            .setNegativeButtonText("Usar contraseña")
+            .setNegativeButtonText(negativeButtonText)
             .build()
 
         BiometricPrompt(activity, ContextCompat.getMainExecutor(activity), callback).authenticate(info)

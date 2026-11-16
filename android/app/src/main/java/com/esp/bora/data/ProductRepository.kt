@@ -21,6 +21,10 @@ class ProductRepository(
         const val PRODUCTS = "products"
         const val USERS = "users"
         const val UPLOAD_TIMEOUT_MS = 120_000L
+        const val MAX_BATCH_WRITES = 450
+        const val MAX_TYPE_FIELDS = 20
+        const val MAX_FIELD_LABEL = 40
+        const val MAX_FIELD_VALUE = 160
     }
 
     fun observeMyProducts(uid: String): Flow<List<Product>> = observeProducts(
@@ -64,6 +68,12 @@ class ProductRepository(
         if (product.id.isNotBlank() && previous?.ownerUid != user.uid) {
             error("Solo puedes editar tus propios productos.")
         }
+        require(product.typeSpecificFields.size <= MAX_TYPE_FIELDS) {
+            "Un producto puede tener hasta $MAX_TYPE_FIELDS datos específicos."
+        }
+        require(product.typeSpecificFields.all { (label, value) ->
+            label.isNotBlank() && label.length <= MAX_FIELD_LABEL && value.length <= MAX_FIELD_VALUE
+        }) { "Revisa los nombres y valores de los datos específicos." }
         val uploadedPaths = mutableListOf<String>()
         val photoRevision = System.currentTimeMillis()
 
@@ -120,6 +130,21 @@ class ProductRepository(
         }
     }
 
+    suspend fun setAvailability(productIds: List<String>, available: Boolean) {
+        require(auth.currentUser != null) { "Tu sesión expiró. Vuelve a ingresar." }
+        val ids = productIds.filter(String::isNotBlank).distinct()
+        ids.chunked(MAX_BATCH_WRITES).forEach { chunk ->
+            val batch = db.batch()
+            chunk.forEach { id ->
+                batch.update(
+                    db.collection(PRODUCTS).document(id),
+                    mapOf("available" to available, "updatedAt" to FieldValue.serverTimestamp()),
+                )
+            }
+            batch.commit().await()
+        }
+    }
+
     suspend fun deleteProduct(product: Product) {
         val uid = auth.currentUser?.uid ?: error("Tu sesión expiró. Vuelve a ingresar.")
         require(product.ownerUid == uid) { "Solo puedes eliminar tus propios productos." }
@@ -159,6 +184,7 @@ private fun Product.toFirestoreMap(): Map<String, Any> = mapOf(
     "exhaustedBehavior" to exhaustedBehavior,
     "available" to available,
     "sold" to sold,
+    "typeSpecificFields" to typeSpecificFields,
     "variants" to variants.map { variant ->
         mapOf(
             "id" to variant.id,

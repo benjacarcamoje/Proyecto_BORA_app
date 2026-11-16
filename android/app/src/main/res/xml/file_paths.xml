@@ -3,4 +3,7 @@
     <files-path
         name="photos"
         path="photos/" />
+    <files-path
+        name="shared_qr"
+        path="qr/" />
 </paths>

@@ -12,6 +12,8 @@ import com.esp.bora.data.Product
 import com.esp.bora.data.ProductRepository
 import com.esp.bora.data.ProductVariant
 import com.esp.bora.data.ProductVariantDraft
+import com.esp.bora.data.StoreRepository
+import com.google.firebase.auth.FirebaseAuth
 import com.esp.bora.data.toUserMessage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -22,6 +24,12 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+
+data class ProductFieldDraft(
+    val id: String = java.util.UUID.randomUUID().toString(),
+    val label: String = "",
+    val value: String = "",
+)
 
 data class NewProductUiState(
     val editingId: String? = null,
@@ -39,6 +47,8 @@ data class NewProductUiState(
     val existingImageUrl: String = "",
     val existingImagePath: String = "",
     val variants: List<ProductVariantDraft> = emptyList(),
+    val typeFields: List<ProductFieldDraft> = emptyList(),
+    val draftModified: Boolean = false,
     val saving: Boolean = false,
     val error: String? = null,
     val done: Boolean = false,
@@ -46,6 +56,7 @@ data class NewProductUiState(
 
 class NewProductViewModel(app: Application) : AndroidViewModel(app) {
     private val repo = ProductRepository()
+    private val storeRepository = StoreRepository()
     private val draftPreferences = app.getSharedPreferences("product_draft", Context.MODE_PRIVATE)
     private val _state = MutableStateFlow(restoreDraft())
     val state: StateFlow<NewProductUiState> = _state.asStateFlow()
@@ -55,12 +66,35 @@ class NewProductViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun load(product: Product?) {
-        if (_state.value.editingId == product?.id &&
-            (product != null || _state.value.editingId == null) &&
+        if (product == null) {
+            if (_state.value.draftModified) return
+            _state.value = NewProductUiState()
+            val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
+            viewModelScope.launch {
+                runCatching { storeRepository.getPrivateSettings(uid) }
+                    .onSuccess { defaults ->
+                        if (_state.value.editingId == null && !_state.value.draftModified) {
+                            _state.update {
+                                it.copy(
+                                    category = defaults.defaultProductCategory,
+                                    productType = defaults.defaultProductType,
+                                    modality = defaults.defaultProductModality,
+                                    managesStock = defaults.defaultProductManagesStock,
+                                    stock = defaults.defaultProductStock.toString(),
+                                    exhaustedBehavior = defaults.defaultProductExhaustedBehavior,
+                                    available = defaults.defaultProductAvailable,
+                                )
+                            }
+                        }
+                    }
+            }
+            return
+        }
+        if (_state.value.editingId == product.id &&
             (_state.value.name.isNotBlank() || _state.value.photoUri != null || _state.value.variants.isNotEmpty() || _state.value.done)
         ) return
 
-        _state.value = if (product == null) NewProductUiState() else NewProductUiState(
+        _state.value = NewProductUiState(
             editingId = product.id,
             name = product.name,
             description = product.description,
@@ -74,6 +108,9 @@ class NewProductViewModel(app: Application) : AndroidViewModel(app) {
             available = product.available,
             existingImageUrl = product.imageUrl,
             existingImagePath = product.imagePath,
+            typeFields = product.typeSpecificFields.map { (label, value) ->
+                ProductFieldDraft(label = label, value = value)
+            },
             variants = product.variants.map {
                 ProductVariantDraft(
                     id = it.id,
@@ -87,30 +124,44 @@ class NewProductViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
 
-    fun onName(value: String) = _state.update { it.copy(name = value.take(80), error = null) }
-    fun onDescription(value: String) = _state.update { it.copy(description = value.take(500), error = null) }
-    fun onPrice(value: String) = _state.update { it.copy(price = value.filter(Char::isDigit).take(9), error = null) }
-    fun onCategory(value: String) = _state.update { it.copy(category = value, error = null) }
-    fun onProductType(value: String) = _state.update { it.copy(productType = value.take(60), error = null) }
-    fun onModality(value: String) = _state.update { it.copy(modality = value, error = null) }
+    fun onName(value: String) = _state.update { it.copy(name = value.take(80), draftModified = true, error = null) }
+    fun onDescription(value: String) = _state.update { it.copy(description = value.take(500), draftModified = true, error = null) }
+    fun onPrice(value: String) = _state.update { it.copy(price = value.filter(Char::isDigit).take(9), draftModified = true, error = null) }
+    fun onCategory(value: String) = _state.update { it.copy(category = value, draftModified = true, error = null) }
+    fun onProductType(value: String) = _state.update { it.copy(productType = value.take(60), draftModified = true, error = null) }
+    fun onModality(value: String) = _state.update { it.copy(modality = value, draftModified = true, error = null) }
     fun onManagesStock(value: Boolean) = _state.update {
-        it.copy(managesStock = value || it.variants.isNotEmpty(), error = null)
+        it.copy(managesStock = value || it.variants.isNotEmpty(), draftModified = true, error = null)
     }
-    fun onStock(value: String) = _state.update { it.copy(stock = value.filter(Char::isDigit).take(7), error = null) }
-    fun onExhaustedBehavior(value: String) = _state.update { it.copy(exhaustedBehavior = value, error = null) }
-    fun onAvailable(value: Boolean) = _state.update { it.copy(available = value, error = null) }
-    fun onPhotoTaken(uri: Uri?) { if (uri != null) _state.update { it.copy(photoUri = uri, error = null) } }
+    fun onStock(value: String) = _state.update { it.copy(stock = value.filter(Char::isDigit).take(7), draftModified = true, error = null) }
+    fun onExhaustedBehavior(value: String) = _state.update { it.copy(exhaustedBehavior = value, draftModified = true, error = null) }
+    fun onAvailable(value: Boolean) = _state.update { it.copy(available = value, draftModified = true, error = null) }
+    fun onPhotoTaken(uri: Uri?) { if (uri != null) _state.update { it.copy(photoUri = uri, draftModified = true, error = null) } }
     fun onVariantPhotoTaken(id: String, uri: Uri?) {
         if (uri != null) updateVariant(id) { it.copy(photoUri = uri) }
     }
 
+    fun addTypeField() = _state.update {
+        if (it.typeFields.size >= 20) it.copy(error = "Puedes agregar hasta 20 datos específicos.")
+        else it.copy(typeFields = it.typeFields + ProductFieldDraft(), draftModified = true, error = null)
+    }
+    fun updateTypeFieldLabel(id: String, value: String) = updateTypeField(id) { it.copy(label = value.take(40)) }
+    fun updateTypeFieldValue(id: String, value: String) = updateTypeField(id) { it.copy(value = value.take(160)) }
+    fun removeTypeField(id: String) = _state.update {
+        it.copy(typeFields = it.typeFields.filterNot { field -> field.id == id }, draftModified = true, error = null)
+    }
+    private fun updateTypeField(id: String, transform: (ProductFieldDraft) -> ProductFieldDraft) =
+        _state.update { state ->
+            state.copy(typeFields = state.typeFields.map { if (it.id == id) transform(it) else it }, draftModified = true, error = null)
+        }
+
     fun addVariant() = _state.update {
         if (it.variants.size >= 10) it.copy(error = "Puedes agregar hasta 10 variantes.")
-        else it.copy(managesStock = true, variants = it.variants + ProductVariantDraft(), error = null)
+        else it.copy(managesStock = true, variants = it.variants + ProductVariantDraft(), draftModified = true, error = null)
     }
     fun removeVariant(id: String) = _state.update { state ->
         val remaining = state.variants.filterNot { it.id == id }
-        state.copy(variants = remaining, managesStock = state.managesStock || remaining.isNotEmpty())
+        state.copy(variants = remaining, managesStock = state.managesStock || remaining.isNotEmpty(), draftModified = true)
     }
     fun updateVariantName(id: String, value: String) = updateVariant(id) { it.copy(name = value.take(60)) }
     fun updateVariantPrice(id: String, value: String) =
@@ -120,7 +171,7 @@ class NewProductViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun updateVariant(id: String, transform: (ProductVariantDraft) -> ProductVariantDraft) =
         _state.update { state ->
-            state.copy(variants = state.variants.map { if (it.id == id) transform(it) else it }, error = null)
+            state.copy(variants = state.variants.map { if (it.id == id) transform(it) else it }, draftModified = true, error = null)
         }
 
     fun showError(message: String) = _state.update { it.copy(error = message) }
@@ -132,9 +183,18 @@ class NewProductViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun persistDraft(state: NewProductUiState) {
-        if (state.editingId != null || state.done) {
+        if (state.editingId != null || state.done || !state.draftModified) {
             draftPreferences.edit().remove("draft").apply()
             return
+        }
+        val typeFields = JSONArray().apply {
+            state.typeFields.forEach { field ->
+                put(JSONObject().apply {
+                    put("id", field.id)
+                    put("label", field.label)
+                    put("value", field.value)
+                })
+            }
         }
         val variants = JSONArray().apply {
             state.variants.forEach { variant ->
@@ -160,7 +220,9 @@ class NewProductViewModel(app: Application) : AndroidViewModel(app) {
             put("stock", state.stock)
             put("exhaustedBehavior", state.exhaustedBehavior)
             put("available", state.available)
+            put("draftModified", state.draftModified)
             put("photoUri", state.photoUri?.toString().orEmpty())
+            put("typeFields", typeFields)
             put("variants", variants)
         }
         draftPreferences.edit().putString("draft", json.toString()).apply()
@@ -169,6 +231,7 @@ class NewProductViewModel(app: Application) : AndroidViewModel(app) {
     private fun restoreDraft(): NewProductUiState = runCatching {
         val json = draftPreferences.getString("draft", null)?.let(::JSONObject) ?: return NewProductUiState()
         val variants = json.optJSONArray("variants") ?: JSONArray()
+        val typeFields = json.optJSONArray("typeFields") ?: JSONArray()
         NewProductUiState(
             name = json.optString("name"),
             description = json.optString("description"),
@@ -180,7 +243,27 @@ class NewProductViewModel(app: Application) : AndroidViewModel(app) {
             stock = json.optString("stock", "0"),
             exhaustedBehavior = json.optString("exhaustedBehavior", "Mostrar agotado"),
             available = json.optBoolean("available", true),
+            draftModified = json.optBoolean(
+                "draftModified",
+                json.optString("name").isNotBlank() || json.optString("description").isNotBlank() ||
+                    json.optString("price").isNotBlank() || json.optString("photoUri").isNotBlank() ||
+                    variants.length() > 0 || json.optString("category", "Otro") != "Otro" ||
+                    json.optString("productType", "General") != "General" ||
+                    json.optString("modality", "Regular") != "Regular" || json.optBoolean("managesStock") ||
+                    json.optString("stock", "0") != "0" ||
+                    json.optString("exhaustedBehavior", "Mostrar agotado") != "Mostrar agotado" ||
+                    !json.optBoolean("available", true),
+            ),
             photoUri = json.optString("photoUri").takeIf(String::isNotBlank)?.let(Uri::parse),
+            typeFields = (0 until typeFields.length()).mapNotNull { index ->
+                typeFields.optJSONObject(index)?.let { item ->
+                    ProductFieldDraft(
+                        id = item.optString("id"),
+                        label = item.optString("label"),
+                        value = item.optString("value"),
+                    )
+                }
+            },
             variants = (0 until variants.length()).mapNotNull { index ->
                 variants.optJSONObject(index)?.let { item ->
                     ProductVariantDraft(
@@ -211,6 +294,14 @@ class NewProductViewModel(app: Application) : AndroidViewModel(app) {
         if (current.managesStock && current.variants.isEmpty() && stock == null) {
             return showError("Ingresa una cantidad de stock válida.")
         }
+        val enteredTypeFields = current.typeFields.filter { it.label.isNotBlank() || it.value.isNotBlank() }
+        if (enteredTypeFields.any { it.label.isBlank() }) {
+            return showError("Escribe el nombre de cada dato específico.")
+        }
+        if (enteredTypeFields.map { it.label.trim().lowercase() }.distinct().size != enteredTypeFields.size) {
+            return showError("Los nombres de los datos específicos no se pueden repetir.")
+        }
+        val typeSpecificFields = enteredTypeFields.associate { it.label.trim() to it.value.trim() }
         val variants = current.variants.map { draft ->
             val variantPrice = draft.price.toLongOrNull()
             val variantStock = draft.stock.toIntOrNull()
@@ -257,6 +348,7 @@ class NewProductViewModel(app: Application) : AndroidViewModel(app) {
                     exhaustedBehavior = current.exhaustedBehavior,
                     available = current.available,
                     variants = variants,
+                    typeSpecificFields = typeSpecificFields,
                 )
                 repo.saveProduct(saved, mainBytes, variantBytes)
                 _state.update { it.copy(saving = false, done = true) }

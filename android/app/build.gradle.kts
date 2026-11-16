@@ -58,6 +58,7 @@ dependencies {
     // Lectura de la orientación (EXIF) de la foto y carga de imágenes
     implementation("androidx.exifinterface:exifinterface:1.3.7")
     implementation("io.coil-kt:coil-compose:2.7.0")
+    implementation("com.google.zxing:core:3.5.4")
 
     // Firebase (el BoM fija las versiones compatibles entre sí)
     implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
@@ -68,5 +69,6 @@ dependencies {
     implementation("com.google.firebase:firebase-firestore")
     implementation("com.google.firebase:firebase-storage")
     implementation("com.google.firebase:firebase-messaging")
+    implementation("com.google.firebase:firebase-functions")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.9.0")
 }

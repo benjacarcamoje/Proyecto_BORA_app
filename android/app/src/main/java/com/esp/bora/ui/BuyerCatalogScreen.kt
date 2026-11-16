@@ -29,6 +29,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
@@ -42,6 +43,8 @@ import coil.compose.AsyncImage
 import com.esp.bora.data.Product
 import com.esp.bora.data.ProductRepository
 import com.esp.bora.data.FollowRepository
+import com.esp.bora.data.StoreProfile
+import com.esp.bora.data.StoreRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
@@ -52,11 +55,13 @@ data class BuyerCatalogUiState(
     val products: List<Product> = emptyList(),
     val error: String? = null,
     val followedStoreIds: Set<String> = emptySet(),
+    val storeProfiles: Map<String, StoreProfile> = emptyMap(),
 )
 
 class BuyerCatalogViewModel(
     private val repo: ProductRepository = ProductRepository(),
     private val followRepository: FollowRepository = FollowRepository(),
+    private val storeRepository: StoreRepository = StoreRepository(),
 ) : ViewModel() {
     private var followedUid: String? = null
     private val _state = MutableStateFlow(BuyerCatalogUiState())
@@ -72,6 +77,10 @@ class BuyerCatalogViewModel(
         }
     }
 
+    suspend fun ensureStoreFollow(uid: String, storeId: String, notificationsEnabled: Boolean) {
+        followRepository.setStoreFollow(uid, storeId, following = true, notificationsEnabled = notificationsEnabled)
+    }
+
     fun toggleFollow(uid: String, storeId: String, notificationsEnabled: Boolean) {
         viewModelScope.launch {
             val following = storeId !in _state.value.followedStoreIds
@@ -83,6 +92,13 @@ class BuyerCatalogViewModel(
 
     init {
         viewModelScope.launch {
+            storeRepository.observePublicProfiles()
+                .catch { }
+                .collect { profiles ->
+                    _state.value = _state.value.copy(storeProfiles = profiles.associateBy { it.id })
+                }
+        }
+        viewModelScope.launch {
             repo.observePublicProducts()
                 .catch { error -> _state.value = _state.value.copy(loading = false, error = error.message) }
                 .collect { products -> _state.value = _state.value.copy(loading = false, products = products) }
@@ -93,36 +109,138 @@ class BuyerCatalogViewModel(
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun BuyerCatalogScreen(
-    uid: String,
+    uid: String?,
     email: String?,
     onSignOut: () -> Unit,
     onFairs: () -> Unit,
+    onDirectory: () -> Unit,
+    onRequestSignIn: (String) -> Unit,
+    pendingFollowStoreId: String? = null,
+    onPendingFollowHandled: (String) -> Unit = {},
     vm: BuyerCatalogViewModel = viewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val visible = state.products.filter { it.visibleInPublicCatalog }
     val context = androidx.compose.ui.platform.LocalContext.current
+    val scope = rememberCoroutineScope()
     var pendingStoreId by remember { mutableStateOf<String?>(null) }
+    var permissionRequestIsForPendingFollow by remember { mutableStateOf(false) }
+    var pendingFollowAttemptedId by remember { mutableStateOf<String?>(null) }
+    var pendingFollowFailed by remember { mutableStateOf(false) }
+    var pendingFollowNotice by remember { mutableStateOf<String?>(null) }
+    var pendingFollowRetry by remember { mutableStateOf(0) }
+    var showSignInPrompt by remember { mutableStateOf(false) }
+
+    fun completePendingFollow(storeId: String, notificationsEnabled: Boolean) {
+        pendingStoreId = null
+        scope.launch {
+            val userId = uid ?: return@launch
+            try {
+                vm.ensureStoreFollow(userId, storeId, notificationsEnabled)
+                pendingFollowFailed = false
+                pendingFollowNotice = if (notificationsEnabled) {
+                    "Listo, ya sigues esta tienda y recibirás avisos."
+                } else {
+                    "Sigues esta tienda. Revisa los permisos de notificaciones del teléfono para recibir avisos."
+                }
+                onPendingFollowHandled(storeId)
+            } catch (_: Exception) {
+                pendingFollowFailed = true
+            }
+        }
+    }
+
     val notificationPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
-        pendingStoreId?.let { vm.toggleFollow(uid, it, granted) }
+        val storeId = pendingStoreId
         pendingStoreId = null
+        if (uid != null && storeId != null) {
+            if (permissionRequestIsForPendingFollow) {
+                permissionRequestIsForPendingFollow = false
+                completePendingFollow(storeId, granted)
+            } else {
+                vm.toggleFollow(uid, storeId, granted)
+            }
+        }
     }
-    LaunchedEffect(uid) { vm.startFollowing(uid) }
+    LaunchedEffect(uid) { if (uid != null) vm.startFollowing(uid) }
+    LaunchedEffect(uid, pendingFollowStoreId, pendingFollowRetry) {
+        val storeId = pendingFollowStoreId
+        if (uid != null && storeId != null && pendingFollowAttemptedId != storeId) {
+            pendingFollowAttemptedId = storeId
+            val needsPermission = Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS,
+            ) != PackageManager.PERMISSION_GRANTED
+            if (needsPermission) {
+                permissionRequestIsForPendingFollow = true
+                pendingStoreId = storeId
+                notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+            } else {
+                completePendingFollow(storeId, notificationsEnabled = true)
+            }
+        }
+    }
+
+    if (showSignInPrompt) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = {
+                showSignInPrompt = false
+                pendingStoreId = null
+            },
+            title = { Text("Inicia sesión para seguir tiendas") },
+            text = { Text("Puedes explorar el catálogo sin cuenta. Para seguir una tienda necesitas iniciar sesión con Google.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showSignInPrompt = false
+                    pendingStoreId?.let(onRequestSignIn)
+                }) { Text("Iniciar sesión") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showSignInPrompt = false
+                    pendingStoreId = null
+                }) { Text("Ahora no") }
+            },
+        )
+    }
+    if (pendingFollowFailed && pendingFollowStoreId != null) {
+        androidx.compose.material3.Surface(color = MaterialTheme.colorScheme.errorContainer) {
+            androidx.compose.foundation.layout.Row(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text("No se pudo completar la acción. Revisa tu conexión y vuelve a intentar.", modifier = Modifier.weight(1f))
+                TextButton(onClick = {
+                    pendingFollowFailed = false
+                    pendingFollowAttemptedId = null
+                    pendingFollowRetry++
+                }) { Text("Reintentar") }
+            }
+        }
+    }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("Explorar BORA") },
                 actions = {
+                    TextButton(onClick = onDirectory) { Text("Directorio") }
                     TextButton(onClick = onFairs) { Text("Ferias") }
-                    TextButton(onClick = onSignOut) { Text("Salir") }
+                    TextButton(onClick = onSignOut) { Text(if (uid == null) "Iniciar sesión" else "Salir") }
                 },
             )
         },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
+            pendingFollowNotice?.let { notice ->
+                Text(
+                    notice,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                )
+            }
             if (!email.isNullOrBlank()) {
                 Text(
                     "Sesión de comprador · $email",
@@ -150,8 +268,20 @@ fun BuyerCatalogScreen(
                         BuyerProductCard(
                             product = product,
                             isFollowing = product.storeId in state.followedStoreIds,
+                            showPrice = state.storeProfiles[product.storeId]?.showPrices ?: true,
+                            onShare = {
+                                val url = "https://bora-database.web.app/?product=" + android.net.Uri.encode(product.id)
+                                val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                    type = "text/plain"
+                                    putExtra(android.content.Intent.EXTRA_TEXT, product.name + " · " + url)
+                                }
+                                context.startActivity(android.content.Intent.createChooser(send, "Compartir producto"))
+                            },
                             onToggleFollow = {
-                                if (product.storeId in state.followedStoreIds) {
+                                if (uid == null) {
+                                    showSignInPrompt = true
+                                    pendingStoreId = product.storeId
+                                } else if (product.storeId in state.followedStoreIds) {
                                     vm.toggleFollow(uid, product.storeId, notificationsEnabled = false)
                                 } else if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(
                                         context,
@@ -159,6 +289,7 @@ fun BuyerCatalogScreen(
                                     ) != PackageManager.PERMISSION_GRANTED
                                 ) {
                                     pendingStoreId = product.storeId
+                                    permissionRequestIsForPendingFollow = false
                                     notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
                                 } else {
                                     vm.toggleFollow(uid, product.storeId, notificationsEnabled = true)
@@ -173,7 +304,13 @@ fun BuyerCatalogScreen(
 }
 
 @Composable
-private fun BuyerProductCard(product: Product, isFollowing: Boolean, onToggleFollow: () -> Unit) {
+private fun BuyerProductCard(
+    product: Product,
+    isFollowing: Boolean,
+    showPrice: Boolean,
+    onShare: () -> Unit,
+    onToggleFollow: () -> Unit,
+) {
     var selectedVariantId by remember(product.id) {
         mutableStateOf(product.variants.firstOrNull()?.id.orEmpty())
     }
@@ -190,7 +327,7 @@ private fun BuyerProductCard(product: Product, isFollowing: Boolean, onToggleFol
             Column(Modifier.padding(16.dp)) {
                 Text(product.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 Text(
-                    formatClp(selectedVariant?.price ?: product.price),
+                    if (showPrice) formatClp(selectedVariant?.price ?: product.price) else "Consultar precio",
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.primary,
                     fontWeight = FontWeight.Bold,
@@ -209,16 +346,25 @@ private fun BuyerProductCard(product: Product, isFollowing: Boolean, onToggleFol
                     product.variants.forEach { variant ->
                         TextButton(onClick = { selectedVariantId = variant.id }) {
                             Text(
-                                (if (variant.id == selectedVariantId) "✓ " else "") +
-                                    "${variant.name} · ${formatClp(variant.price)}" +
-                                    if (product.managesStock) " · Stock ${variant.stock}" else "",
+                                buildString {
+                                    if (variant.id == selectedVariantId) append("✓ ")
+                                    append(variant.name)
+                                    if (showPrice) append(" · ${formatClp(variant.price)}")
+                                    if (product.managesStock) append(" · Stock ${variant.stock}")
+                                },
                             )
                         }
+                    }
+                }
+                product.typeSpecificFields.forEach { (label, value) ->
+                    if (value.isNotBlank()) {
+                        Text("$label: $value", style = MaterialTheme.typography.bodySmall)
                     }
                 }
                 if (!product.managesStock && product.modality == "Pieza única") {
                     Text("Pieza única", style = MaterialTheme.typography.bodySmall)
                 }
+                TextButton(onClick = onShare) { Text("Compartir producto") }
                 if (product.storeId.isNotBlank()) {
                     TextButton(onClick = onToggleFollow) {
                         Text(if (isFollowing) "Dejar de seguir tienda" else "Seguir tienda y recibir avisos")

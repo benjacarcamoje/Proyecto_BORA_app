@@ -40,6 +40,7 @@ data class Product(
     val available: Boolean = true,
     val sold: Boolean = false,
     val variants: List<ProductVariant> = emptyList(),
+    val typeSpecificFields: Map<String, String> = emptyMap(),
     val createdAt: Timestamp? = null,
     val updatedAt: Timestamp? = null,
 ) {
