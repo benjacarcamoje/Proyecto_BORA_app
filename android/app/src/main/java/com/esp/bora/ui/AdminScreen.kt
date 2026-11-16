@@ -61,8 +61,8 @@ fun AdminScreen(onSignOut: () -> Unit) {
         scope.launch {
             busy = true
             try {
-                accounts = parseAccounts(functions.getHttpsCallable("adminListAccounts").call().await().data)
-                val config = functions.getHttpsCallable("adminGetSettings").call().await().data as? Map<*, *>
+                accounts = parseAccounts(functions.getHttpsCallable("adminListAccounts").call().await().getData())
+                val config = functions.getHttpsCallable("adminGetSettings").call().await().getData() as? Map<*, *>
                 access = config?.get("anonymousNavigation") as? String ?: "allow"
                 categories = (config?.get("categories") as? List<*>)?.filterIsInstance<String>()?.joinToString(", ") ?: categories
                 productTypes = (config?.get("productTypes") as? List<*>)?.filterIsInstance<String>()?.joinToString(", ") ?: productTypes
@@ -99,7 +99,7 @@ fun AdminScreen(onSignOut: () -> Unit) {
                                     functions.getHttpsCallable("adminSetAccountActive").call(
                                         mapOf("uid" to account.uid, "active" to !account.active),
                                     ).await()
-                                    accounts = parseAccounts(functions.getHttpsCallable("adminListAccounts").call().await().data)
+                                    accounts = parseAccounts(functions.getHttpsCallable("adminListAccounts").call().await().getData())
                                     message = if (account.active) "Cuenta desactivada." else "Cuenta activada."
                                 } catch (e: Exception) { message = e.localizedMessage ?: "No se pudo cambiar el estado." }
                                 busy = false
@@ -132,7 +132,7 @@ fun AdminScreen(onSignOut: () -> Unit) {
                         )).await()
                         message = "Cuenta creada."
                         email = ""; name = ""; password = ""
-                        accounts = parseAccounts(functions.getHttpsCallable("adminListAccounts").call().await().data)
+                        accounts = parseAccounts(functions.getHttpsCallable("adminListAccounts").call().await().getData())
                     } catch (e: Exception) { message = e.localizedMessage ?: "No se pudo crear la cuenta." }
                     busy = false
                 } }) { Text("Crear cuenta") }

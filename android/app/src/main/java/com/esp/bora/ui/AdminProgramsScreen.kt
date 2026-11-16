@@ -66,6 +66,7 @@ private data class FairParticipantRow(
     val associationId: String = "",
 )
 
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun AdminProgramsScreen(onBack: () -> Unit) {
     var section by remember { mutableStateOf("home") }
@@ -123,6 +124,7 @@ private fun AdminFilterChoice(
     }
 }
 
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 private fun FairAdminScreen(onBack: () -> Unit) {
     val context = LocalContext.current
@@ -166,7 +168,7 @@ private fun FairAdminScreen(onBack: () -> Unit) {
                 val storeTypes = db.collection("stores").get().await().documents.associate { doc ->
                     doc.getString("ownerUid").orEmpty() to doc.getString("businessType").orEmpty()
                 }
-                val accountData = functions.getHttpsCallable("adminListAccounts").call().await().data as? Map<*, *>
+                val accountData = functions.getHttpsCallable("adminListAccounts").call().await().getData() as? Map<*, *>
                 accounts = (accountData?.get("accounts") as? List<*>).orEmpty().mapNotNull { item ->
                     val row = item as? Map<*, *> ?: return@mapNotNull null
                     val uid = row["uid"] as? String ?: return@mapNotNull null
@@ -560,6 +562,7 @@ private data class AssociationEntry(
     val active: Boolean,
 )
 
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 private fun AssociationAdminScreen(onBack: () -> Unit) {
     val db = remember { FirebaseFirestore.getInstance() }
@@ -598,7 +601,7 @@ private fun AssociationAdminScreen(onBack: () -> Unit) {
                 val storeTypes = db.collection("stores").get().await().documents.associate { doc ->
                     doc.getString("ownerUid").orEmpty() to doc.getString("businessType").orEmpty()
                 }
-                val data = functions.getHttpsCallable("adminListAccounts").call().await().data as? Map<*, *>
+                val data = functions.getHttpsCallable("adminListAccounts").call().await().getData() as? Map<*, *>
                 accounts = (data?.get("accounts") as? List<*>).orEmpty().mapNotNull { item ->
                     val row = item as? Map<*, *> ?: return@mapNotNull null
                     if (row["role"] != "emprendedora" || row["active"] == false) return@mapNotNull null
