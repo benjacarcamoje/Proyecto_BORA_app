@@ -77,7 +77,7 @@ class ProductRepository(
         val uploadedPaths = mutableListOf<String>()
         val photoRevision = System.currentTimeMillis()
 
-        try {
+        return try {
             val imagePath = if (mainImageBytes != null) {
                 "products/${user.uid}/${document.id}_$photoRevision.jpg".also { path ->
                     upload(path, mainImageBytes)

@@ -203,7 +203,7 @@ class StoreRepository(
         const val STORES = "stores"
         const val STORE_SETTINGS = "storeSettings"
         const val STORE_CONTACTS = "storeContacts"
-        const val CONTACT_LIMIT = 100
+        const val CONTACT_LIMIT = 100L
         val CONTACT_MODES = setOf("whatsapp", "form", "both")
     }
 }

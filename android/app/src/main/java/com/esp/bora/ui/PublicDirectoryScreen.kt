@@ -37,6 +37,7 @@ import java.io.FileOutputStream
 
 private const val PUBLIC_WEB_URL = "https://bora-database.web.app"
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PublicDirectoryScreen(
     uid: String?,
@@ -52,12 +53,18 @@ fun PublicDirectoryScreen(
     val productsRepo = remember { ProductRepository() }
     val follows = remember { FollowRepository() }
     val snackbar = remember { SnackbarHostState() }
-    val stores by storesRepo.observePublicProfiles().catch { snackbar.showSnackbar("No se pudieron cargar las tiendas.") }
-        .collectAsStateWithLifecycle(initialValue = emptyList())
-    val associations by directory.observeAssociations().catch { snackbar.showSnackbar("No se pudieron cargar las asociaciones.") }
-        .collectAsStateWithLifecycle(initialValue = emptyList())
-    val products by productsRepo.observePublicProducts().catch { snackbar.showSnackbar("No se pudieron cargar los productos.") }
-        .collectAsStateWithLifecycle(initialValue = emptyList())
+    val storesFlow = remember(storesRepo, snackbar) {
+        storesRepo.observePublicProfiles().catch { snackbar.showSnackbar("No se pudieron cargar las tiendas.") }
+    }
+    val associationsFlow = remember(directory, snackbar) {
+        directory.observeAssociations().catch { snackbar.showSnackbar("No se pudieron cargar las asociaciones.") }
+    }
+    val productsFlow = remember(productsRepo, snackbar) {
+        productsRepo.observePublicProducts().catch { snackbar.showSnackbar("No se pudieron cargar los productos.") }
+    }
+    val stores by storesFlow.collectAsStateWithLifecycle(initialValue = emptyList())
+    val associations by associationsFlow.collectAsStateWithLifecycle(initialValue = emptyList())
+    val products by productsFlow.collectAsStateWithLifecycle(initialValue = emptyList())
     var followedAssociations by remember(uid) { mutableStateOf<Set<String>>(emptySet()) }
     var alertedAssociations by remember(uid) { mutableStateOf<Set<String>>(emptySet()) }
     var associationNotificationOverrides by remember { mutableStateOf<Map<String, Boolean>>(emptyMap()) }
