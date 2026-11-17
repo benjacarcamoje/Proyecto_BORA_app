@@ -55,13 +55,12 @@ class AuthViewModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                // Si no se puede leer la política, exigimos sesión para no habilitar
-                // navegación anónima contra una configuración desconocida.
+                // La entrada como invitado está disponible aunque falle la política remota.
                 _state.update {
                     it.copy(
                         anonymousNavigation = "require_login",
                         policyLoading = false,
-                        policyError = "No se pudo cargar la configuración de acceso. Inicia sesión para continuar.",
+                        policyError = "No se pudo cargar la configuración de acceso. Puedes ingresar sin iniciar sesión.",
                     )
                 }
             }
@@ -121,9 +120,15 @@ class AuthViewModel(
     }
 
     fun enterGuest() {
-        val current = _state.value
-        if (current.policyLoading || current.anonymousNavigation == "require_login") return
-        _state.update { it.copy(guest = true, mode = null, selectedMode = null, promptSeen = true, error = null) }
+        _state.update {
+            it.copy(
+                guest = true,
+                mode = null,
+                selectedMode = null,
+                promptSeen = true,
+                error = null,
+            )
+        }
     }
 
     fun leaveGuest() {

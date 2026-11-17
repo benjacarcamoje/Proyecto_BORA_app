@@ -76,7 +76,7 @@ fun AccountModeScreen(
         onExploreAnonymously?.let { onExplore ->
             Spacer(Modifier.height(12.dp))
             TextButton(onClick = onExplore, modifier = Modifier.fillMaxWidth().height(52.dp)) {
-                Text("Explorar sin iniciar sesión")
+                Text("Ingresar sin inicio de sesión")
             }
         }
         Spacer(Modifier.height(12.dp))
@@ -118,7 +118,7 @@ fun AnonymousAccessPrompt(
         }
         Spacer(Modifier.height(8.dp))
         OutlinedButton(onClick = onSkip, modifier = Modifier.fillMaxWidth().height(52.dp)) {
-            Text("Omitir y explorar")
+            Text("Ingresar sin inicio de sesión")
         }
     }
 }

@@ -9,15 +9,20 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -33,11 +38,14 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import coil.compose.AsyncImage
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -45,6 +53,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.esp.bora.data.Fair
 import com.esp.bora.data.FairInvitation
 import com.esp.bora.data.FairRepository
+import com.esp.bora.data.DemoContent
 import com.esp.bora.data.toUserMessage
 import com.google.firebase.Timestamp
 import java.text.DateFormat
@@ -121,6 +130,8 @@ fun FairsScreen(
     vm: FairsViewModel = viewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
+    val useDemoFairs = uid == null && state.fairs.isEmpty()
+    val displayedFairs = if (useDemoFairs) remember { DemoContent.upcomingFairs() } else state.fairs
     val snackbar = remember { SnackbarHostState() }
     val context = LocalContext.current
     var deviceLocation by remember { mutableStateOf<Location?>(null) }
@@ -138,8 +149,8 @@ fun FairsScreen(
         }
     }
     val orderedFairs = deviceLocation?.let { location ->
-        state.fairs.sortedBy { fair -> distanceMeters(location, fair) }
-    } ?: state.fairs
+        displayedFairs.sortedBy { fair -> distanceMeters(location, fair) }
+    } ?: displayedFairs
     DisposableEffect(uid) {
         vm.start(uid)
         onDispose { vm.stop() }
@@ -174,14 +185,19 @@ fun FairsScreen(
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
         when {
-            state.loading -> CircularProgressIndicator(Modifier.padding(padding).padding(24.dp))
-            state.error != null -> Text("No se pudieron cargar las ferias. Revisa tu conexión.", Modifier.padding(padding).padding(24.dp), color = MaterialTheme.colorScheme.error)
-            state.fairs.isEmpty() -> Text("No hay próximas ferias publicadas.", Modifier.padding(padding).padding(24.dp))
+            state.loading && !useDemoFairs -> CircularProgressIndicator(Modifier.padding(padding).padding(24.dp))
+            state.error != null && !useDemoFairs && displayedFairs.isEmpty() -> Text("No se pudieron cargar las ferias. Revisa tu conexión.", Modifier.padding(padding).padding(24.dp), color = MaterialTheme.colorScheme.error)
+            displayedFairs.isEmpty() -> Text("No hay próximas ferias publicadas.", Modifier.padding(padding).padding(24.dp))
             else -> LazyColumn(
                 modifier = Modifier.fillMaxSize().padding(padding),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
+                if (useDemoFairs) item(key = "demo-fairs-banner") {
+                    Text("Modo de demostración: ferias y direcciones de ejemplo en Puerto Montt. No son ubicaciones verificadas ni se guardan en Firebase.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } else if (state.error != null) item(key = "fairs-offline-banner") {
+                    Text("No hay conexión con las ferias; revisa los datos cuando vuelva la conexión.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                }
                 item {
                     FairOverviewMap(fairs = orderedFairs, userLocation = deviceLocation)
                     TextButton(onClick = {
@@ -236,7 +252,24 @@ private fun FairCard(
     onDirections: () -> Unit,
 ) {
     Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column {
+            if (fair.imageUrl.isNotBlank()) {
+                AsyncImage(
+                    model = fair.imageUrl,
+                    contentDescription = fair.name,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxWidth().height(180.dp),
+                )
+            } else if (fair.id.startsWith("demo-")) {
+                Box(
+                    modifier = Modifier.fillMaxWidth().height(120.dp)
+                        .background(MaterialTheme.colorScheme.tertiaryContainer),
+                    contentAlignment = androidx.compose.ui.Alignment.Center,
+                ) {
+                    Text("Feria de muestra", color = MaterialTheme.colorScheme.onTertiaryContainer)
+                }
+            }
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(fair.name, style = MaterialTheme.typography.titleLarge)
             if (fair.description.isNotBlank()) Text(fair.description)
             Text("Lugar: ${fair.address.ifBlank { "Ubicación por confirmar" }}")
@@ -253,6 +286,7 @@ private fun FairCard(
             }
             TextButton(onClick = onDetails) { Text("Ver ficha y mapa") }
             TextButton(onClick = onDirections) { Text("Cómo llegar") }
+            }
         }
     }
 }
@@ -260,6 +294,18 @@ private fun FairCard(
 @Composable
 private fun FairOverviewMap(fairs: List<Fair>, userLocation: Location?) {
     if (fairs.isEmpty()) return
+    if (fairs.all { it.id.startsWith("demo-") }) {
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Ubicaciones de referencia", style = MaterialTheme.typography.titleMedium)
+                fairs.forEach { fair ->
+                    Text("• ${fair.name}: ${fair.address}", style = MaterialTheme.typography.bodySmall)
+                }
+                Text("El mapa en línea se mostrará cuando haya conexión.", style = MaterialTheme.typography.bodySmall)
+            }
+        }
+        return
+    }
     val points = org.json.JSONArray().apply {
         fairs.forEach { fair ->
             put(org.json.JSONObject().put("lat", fair.latitude).put("lon", fair.longitude).put("name", fair.name))
@@ -317,6 +363,10 @@ private fun FairPublicDetailsDialog(
     var qrVisible by remember { mutableStateOf(false) }
 
     LaunchedEffect(fair.id) {
+        if (fair.id.startsWith("demo-")) {
+            loading = false
+            return@LaunchedEffect
+        }
         runCatching {
             val participantDocs = db.collection("fairs").document(fair.id).collection("participants")
                 .whereEqualTo("status", "confirmada").get().await().documents
@@ -385,7 +435,8 @@ private fun FairPublicDetailsDialog(
                 FairMapPreview(fair)
                 TextButton(onClick = onDirections) { Text("Cómo llegar") }
                 Text("Participantes confirmados", style = MaterialTheme.typography.titleMedium)
-                if (loading) CircularProgressIndicator()
+                if (fair.id.startsWith("demo-")) Text("La ficha de muestra no incluye participantes reales.")
+                else if (loading) CircularProgressIndicator()
                 else if (vendors.isEmpty()) Text("Aún no hay participantes confirmados.")
                 vendors.forEach { vendor ->
                     Text(vendor.name, style = MaterialTheme.typography.titleSmall)
@@ -397,7 +448,9 @@ private fun FairPublicDetailsDialog(
             }
         },
         confirmButton = {
-            Row {
+            if (fair.id.startsWith("demo-")) {
+                TextButton(onClick = onDismiss) { Text("Cerrar") }
+            } else Row {
                 TextButton(onClick = {
                     val url = "https://bora-database.web.app/?fair=" + Uri.encode(fair.id)
                     val send = Intent(Intent.ACTION_SEND).apply {
@@ -415,6 +468,16 @@ private fun FairPublicDetailsDialog(
 
 @Composable
 private fun FairMapPreview(fair: Fair) {
+    if (fair.id.startsWith("demo-")) {
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Mapa de referencia sin conexión", style = MaterialTheme.typography.titleSmall)
+                Text("Puerto Montt · ${fair.latitude}, ${fair.longitude}", style = MaterialTheme.typography.bodySmall)
+                Text("Las coordenadas son demostrativas.", style = MaterialTheme.typography.bodySmall)
+            }
+        }
+        return
+    }
     val context = LocalContext.current
     val lat = fair.latitude
     val lon = fair.longitude

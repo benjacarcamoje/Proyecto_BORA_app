@@ -6,6 +6,7 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -40,6 +41,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
+import com.esp.bora.data.DemoContent
 import com.esp.bora.data.Product
 import com.esp.bora.data.ProductRepository
 import com.esp.bora.data.FollowRepository
@@ -120,7 +122,9 @@ fun BuyerCatalogScreen(
     vm: BuyerCatalogViewModel = viewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
-    val visible = state.products.filter { it.visibleInPublicCatalog }
+    val useDemoCatalog = uid == null && state.products.isEmpty()
+    val catalogProducts = if (useDemoCatalog) DemoContent.products else state.products
+    val visible = catalogProducts.filter { it.visibleInPublicCatalog }
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
     var pendingStoreId by remember { mutableStateOf<String?>(null) }
@@ -228,7 +232,7 @@ fun BuyerCatalogScreen(
                 actions = {
                     TextButton(onClick = onDirectory) { Text("Directorio") }
                     TextButton(onClick = onFairs) { Text("Ferias") }
-                    TextButton(onClick = onSignOut) { Text(if (uid == null) "Iniciar sesión" else "Salir") }
+                    TextButton(onClick = onSignOut) { Text(if (uid == null) "Salir de invitado" else "Salir") }
                 },
             )
         },
@@ -250,8 +254,8 @@ fun BuyerCatalogScreen(
                 )
             }
             when {
-                state.loading -> CircularProgressIndicator(Modifier.padding(24.dp))
-                state.error != null -> Text(
+                state.loading && !useDemoCatalog -> CircularProgressIndicator(Modifier.padding(24.dp))
+                state.error != null && !useDemoCatalog && visible.isEmpty() -> Text(
                     "No se pudo cargar el catálogo. Revisa tu conexión.",
                     color = MaterialTheme.colorScheme.error,
                     modifier = Modifier.padding(24.dp),
@@ -264,6 +268,23 @@ fun BuyerCatalogScreen(
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
+                    if (useDemoCatalog) {
+                        item(key = "demo-catalog-banner") {
+                            Text(
+                                "Modo de demostración: estos productos son ejemplos locales y no se publican ni guardan en Firebase.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    } else if (state.error != null) {
+                        item(key = "catalog-offline-banner") {
+                            Text(
+                                "No hay conexión con el catálogo; se muestran los datos disponibles en el teléfono.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                    }
                     items(visible, key = { it.id }) { product ->
                         BuyerProductCard(
                             product = product,
@@ -318,12 +339,22 @@ private fun BuyerProductCard(
     val image = selectedVariant?.imageUrl?.takeIf(String::isNotBlank) ?: product.imageUrl
     Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
         Column {
-            AsyncImage(
-                model = image,
-                contentDescription = product.name,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxWidth().aspectRatio(4f / 3f),
-            )
+            if (image.isNotBlank()) {
+                AsyncImage(
+                    model = image,
+                    contentDescription = product.name,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxWidth().aspectRatio(4f / 3f),
+                )
+            } else {
+                androidx.compose.foundation.layout.Box(
+                    modifier = Modifier.fillMaxWidth().aspectRatio(4f / 3f)
+                        .background(MaterialTheme.colorScheme.secondaryContainer),
+                    contentAlignment = androidx.compose.ui.Alignment.Center,
+                ) {
+                    Text("Producto de demostración", color = MaterialTheme.colorScheme.onSecondaryContainer)
+                }
+            }
             Column(Modifier.padding(16.dp)) {
                 Text(product.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 Text(

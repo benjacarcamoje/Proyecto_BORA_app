@@ -1,6 +1,8 @@
 package com.esp.bora.ui
 
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -67,7 +69,6 @@ fun BoraApp(
     }
 
     when {
-        uid == null && auth.policyLoading -> AccessPolicyLoadingScreen()
         uid == null && auth.guest -> BuyerHomeHost(
             uid = null,
             email = null,
@@ -80,7 +81,7 @@ fun BoraApp(
         )
         uid == null && auth.selectedMode == null -> AccountModeScreen(
             onChoose = authVm::selectMode,
-            onExploreAnonymously = if (auth.anonymousNavigation == "allow") authVm::enterGuest else null,
+            onExploreAnonymously = authVm::enterGuest,
             message = auth.policyError,
         )
         uid == null && auth.selectedMode == AccountMode.BUYER -> BuyerSignInScreen(
@@ -175,20 +176,6 @@ private fun BuyerHomeHost(
             pendingFollowStoreId = pendingFollowStoreId,
             onPendingFollowHandled = onPendingFollowHandled,
         )
-    }
-}
-
-@Composable
-private fun AccessPolicyLoadingScreen() {
-    androidx.compose.foundation.layout.Box(
-        Modifier.fillMaxSize(),
-        contentAlignment = androidx.compose.ui.Alignment.Center,
-    ) {
-        androidx.compose.foundation.layout.Column(horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
-            androidx.compose.material3.CircularProgressIndicator()
-            androidx.compose.foundation.layout.Spacer(Modifier.height(16.dp))
-            androidx.compose.material3.Text("Cargando configuración de acceso…")
-        }
     }
 }
 
