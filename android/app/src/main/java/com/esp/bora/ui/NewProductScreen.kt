@@ -75,6 +75,8 @@ fun NewProductScreen(
     val context = LocalContext.current
     var pendingCameraUri by rememberSaveable { mutableStateOf<Uri?>(null) }
     var galleryVariantId by rememberSaveable { mutableStateOf<String?>(null) }
+    var wizardStep by rememberSaveable(product?.id) { mutableStateOf(0) }
+    var wizardError by rememberSaveable(product?.id) { mutableStateOf<String?>(null) }
 
     val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { saved ->
         if (saved) vm.onPhotoTaken(pendingCameraUri)
@@ -114,7 +116,38 @@ fun NewProductScreen(
     }
 
     LaunchedEffect(product?.id) { vm.load(product) }
-    BackHandler(enabled = !state.saving) { cancel() }
+    BackHandler(enabled = !state.saving) {
+        if (wizardStep > 0) {
+            wizardStep--
+            wizardError = null
+        } else {
+            cancel()
+        }
+    }
+    fun continueWizard() {
+        val validationMessage = when (wizardStep) {
+            0 -> when {
+                state.name.isBlank() -> "Ingresa el nombre del producto."
+                state.price.toLongOrNull()?.let { it > 0L } != true -> "Ingresa un precio válido."
+                state.photoUri == null && state.existingImageUrl.isBlank() -> "Agrega una foto del producto."
+                else -> null
+            }
+            1 -> if (state.productType.isBlank()) "Ingresa el tipo de producto." else null
+            2 -> if (state.managesStock && state.variants.isEmpty() && state.stock.toIntOrNull() == null) {
+                "Ingresa una cantidad de stock válida."
+            } else null
+            else -> null
+        }
+        if (validationMessage != null) {
+            wizardError = validationMessage
+        } else if (wizardStep < 3) {
+            wizardError = null
+            wizardStep++
+        } else {
+            wizardError = null
+            vm.save()
+        }
+    }
     LaunchedEffect(state.done) {
         if (state.done) {
             vm.reset()
@@ -141,6 +174,19 @@ fun NewProductScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            val steps = listOf("Foto y datos", "Categoría", "Disponibilidad", "Variantes")
+            Text(
+                "Paso ${wizardStep + 1} de ${steps.size} · ${steps[wizardStep]}",
+                style = MaterialTheme.typography.titleMedium,
+            )
+            androidx.compose.material3.LinearProgressIndicator(
+                progress = { (wizardStep + 1f) / steps.size },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            wizardError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+
+            if (wizardStep == 0) {
             val mainImage = state.photoUri ?: state.existingImageUrl.takeIf(String::isNotBlank)
             Box(
                 modifier = Modifier
@@ -197,6 +243,9 @@ fun NewProductScreen(
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 modifier = Modifier.fillMaxWidth(),
             )
+            }
+
+            if (wizardStep == 1) {
             DropdownChoice(
                 label = "Categoría",
                 selected = state.category,
@@ -253,7 +302,9 @@ fun NewProductScreen(
                 enabled = !state.saving,
                 onSelect = vm::onModality,
             )
+            }
 
+            if (wizardStep == 2) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -298,7 +349,18 @@ fun NewProductScreen(
                 )
                 Text("Disponible en mi catálogo")
             }
+            }
 
+            if (wizardStep == 3) {
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Revisa tu producto", style = MaterialTheme.typography.titleMedium)
+                    Text(state.name.ifBlank { "Sin nombre" })
+                    Text("${state.category} · ${state.productType} · ${state.modality}")
+                    Text("Precio base: $${state.price.ifBlank { "0" }}")
+                    Text(if (state.available) "Visible en el catálogo" else "No visible en el catálogo")
+                }
+            }
             Text("Variantes", style = MaterialTheme.typography.titleMedium)
             Text(
                 "Agrega opciones como talla o color. Cada variante tiene precio, foto y stock propios.",
@@ -361,24 +423,42 @@ fun NewProductScreen(
                     }
                 }
             }
-            OutlinedButton(onClick = vm::addVariant, enabled = !state.saving, modifier = Modifier.fillMaxWidth()) {
-                Text("Agregar variante")
+            OutlinedButton(
+                onClick = vm::addVariant,
+                enabled = !state.saving && state.variants.size < ProductOptions.MAX_VARIANTS,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(if (state.variants.size >= ProductOptions.MAX_VARIANTS) "Máximo de 5 variantes" else "Agregar variante")
             }
 
-            state.error?.let {
-                Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
             }
-            Button(
-                onClick = vm::save,
-                enabled = !state.saving,
-                modifier = Modifier.fillMaxWidth().height(52.dp),
-            ) {
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                if (wizardStep > 0) {
+                    OutlinedButton(
+                        onClick = { wizardStep--; wizardError = null },
+                        enabled = !state.saving,
+                        modifier = Modifier.weight(1f).height(52.dp),
+                    ) { Text("Anterior") }
+                }
+                Button(
+                    onClick = ::continueWizard,
+                    enabled = !state.saving,
+                    modifier = Modifier.weight(1f).height(52.dp),
+                ) {
                 if (state.saving) {
                     CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
                     Spacer(Modifier.width(12.dp))
                     Text("Guardando…")
                 } else {
-                    Text(if (product == null) "Publicar producto" else "Guardar cambios")
+                    Text(
+                        when {
+                            wizardStep < 3 -> "Continuar"
+                            product == null -> "Publicar producto"
+                            else -> "Guardar cambios"
+                        },
+                    )
+                }
                 }
             }
         }

@@ -23,7 +23,7 @@ class AuthRepository(
     suspend fun resolveCurrentMode(): AccountMode? {
         val user = auth.currentUser ?: return null
         if (user.providerData.any { it.providerId == GoogleAuthProvider.PROVIDER_ID }) return AccountMode.BUYER
-        val role = db.collection("users").document(user.uid).get().await().getString("role")
+        val role = db.collection("usuarios").document(user.uid).get().await().getString("role")
         return if (role == "admin") AccountMode.ADMIN else if (user.email != null) AccountMode.ENTREPRENEUR else null
     }
 

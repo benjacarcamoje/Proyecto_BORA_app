@@ -44,6 +44,7 @@ import kotlinx.coroutines.launch
 fun AccountModeScreen(
     onChoose: (AccountMode) -> Unit,
     onExploreAnonymously: (() -> Unit)? = null,
+    allowGuestEntry: Boolean = true,
     message: String? = null,
 ) {
     Column(
@@ -73,10 +74,12 @@ fun AccountModeScreen(
         ) {
             Text("Entrar a mi tienda")
         }
-        onExploreAnonymously?.let { onExplore ->
-            Spacer(Modifier.height(12.dp))
-            TextButton(onClick = onExplore, modifier = Modifier.fillMaxWidth().height(52.dp)) {
-                Text("Ingresar sin inicio de sesión")
+        if (allowGuestEntry) {
+            onExploreAnonymously?.let { onExplore ->
+                Spacer(Modifier.height(12.dp))
+                TextButton(onClick = onExplore, modifier = Modifier.fillMaxWidth().height(52.dp)) {
+                    Text("Ingresar sin inicio de sesión")
+                }
             }
         }
         Spacer(Modifier.height(12.dp))

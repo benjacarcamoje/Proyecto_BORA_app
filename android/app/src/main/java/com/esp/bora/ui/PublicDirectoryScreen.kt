@@ -30,6 +30,7 @@ import com.google.firebase.functions.FirebaseFunctions
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import java.io.File
@@ -56,9 +57,8 @@ fun PublicDirectoryScreen(
     val storesFlow = remember(storesRepo, snackbar) {
         storesRepo.observePublicProfiles().catch { snackbar.showSnackbar("No se pudieron cargar las tiendas.") }
     }
-    val associationsFlow = remember(directory, snackbar) {
-        directory.observeAssociations().catch { snackbar.showSnackbar("No se pudieron cargar las asociaciones.") }
-    }
+    // Las reglas actuales reservan las lecturas de asociaciones para administradoras.
+    val associationsFlow = remember { flowOf(emptyList<PublicAssociation>()) }
     val productsFlow = remember(productsRepo, snackbar) {
         productsRepo.observePublicProducts().catch { snackbar.showSnackbar("No se pudieron cargar los productos.") }
     }
@@ -358,6 +358,11 @@ fun PublicDirectoryScreen(
                 FilterChip(selectedSector.isBlank(), { selectedSector = "" }, label = { Text("Todos los sectores") })
                 sectors.forEach { sector -> FilterChip(selectedSector == sector, { selectedSector = sector }, label = { Text(sector) }) }
             }
+            Text(
+                "El directorio de asociaciones no está disponible para compradores por ahora.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(selectedAssociationId.isBlank(), { selectedAssociationId = "" }, label = { Text("Todas las asociaciones") })
                 associations.forEach { association ->

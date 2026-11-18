@@ -82,6 +82,7 @@ fun BoraApp(
         uid == null && auth.selectedMode == null -> AccountModeScreen(
             onChoose = authVm::selectMode,
             onExploreAnonymously = authVm::enterGuest,
+            allowGuestEntry = auth.anonymousNavigation != "require_login" || auth.policyError != null,
             message = auth.policyError,
         )
         uid == null && auth.selectedMode == AccountMode.BUYER -> BuyerSignInScreen(

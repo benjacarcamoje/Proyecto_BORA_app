@@ -14,7 +14,7 @@ class FairRepository(
     private val db: FirebaseFirestore = FirebaseFirestore.getInstance(),
 ) {
     fun observeUpcomingFairs(): Flow<List<Fair>> = callbackFlow {
-        val registration = db.collection("fairs")
+        val registration = db.collection("ferias")
             .whereEqualTo("published", true)
             .whereEqualTo("cancelled", false)
             .addSnapshotListener { snapshot, error ->
@@ -52,7 +52,7 @@ class FairRepository(
 
     suspend fun suggestFairNear(uid: String, latitude: Double, longitude: Double): String? {
         val now = Timestamp.now()
-        val fairs = db.collection("fairs")
+        val fairs = db.collection("ferias")
             .whereEqualTo("published", true)
             .whereEqualTo("cancelled", false)
             .get().await().documents.mapNotNull { document ->
@@ -63,7 +63,7 @@ class FairRepository(
                 start != null && end != null && start <= now && end >= now
             }
         val eligible = fairs.mapNotNull { fair ->
-            val participant = db.collection("fairs").document(fair.id)
+            val participant = db.collection("ferias").document(fair.id)
                 .collection("participants").document(uid).get().await()
             if (participant.getString("status") != "confirmada") return@mapNotNull null
             val result = FloatArray(1)
@@ -76,7 +76,7 @@ class FairRepository(
     suspend fun respondToInvitation(fairId: String, response: String) {
         require(response in setOf("confirmada", "rechazada"))
         val uid = auth.currentUser?.uid ?: error("Tu sesión expiró. Vuelve a ingresar.")
-        val invitation = db.collection("fairs").document(fairId)
+        val invitation = db.collection("ferias").document(fairId)
             .collection("participants").document(uid)
         db.runTransaction { transaction ->
             val snapshot = transaction.get(invitation)

@@ -55,6 +55,7 @@ import com.esp.bora.data.FairInvitation
 import com.esp.bora.data.FairRepository
 import com.esp.bora.data.DemoContent
 import com.esp.bora.data.toUserMessage
+import com.esp.bora.data.toBoraProduct
 import com.google.firebase.Timestamp
 import java.text.DateFormat
 import java.util.Date
@@ -146,6 +147,31 @@ fun FairsScreen(
                     .mapNotNull { provider -> manager.getLastKnownLocation(provider) }
                     .maxByOrNull { it.time }
             }.getOrNull()
+        }
+    }
+    LaunchedEffect(Unit) {
+        val hasFine = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.ACCESS_FINE_LOCATION,
+        ) == PackageManager.PERMISSION_GRANTED
+        val hasCoarse = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.ACCESS_COARSE_LOCATION,
+        ) == PackageManager.PERMISSION_GRANTED
+        if (hasFine || hasCoarse) {
+            val manager = context.getSystemService(LocationManager::class.java)
+            deviceLocation = runCatching {
+                manager.getProviders(true)
+                    .mapNotNull { provider -> manager.getLastKnownLocation(provider) }
+                    .maxByOrNull { it.time }
+            }.getOrNull()
+        } else {
+            locationPermission.launch(
+                arrayOf(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION,
+                ),
+            )
         }
     }
     val orderedFairs = deviceLocation?.let { location ->
@@ -260,20 +286,24 @@ private fun FairCard(
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxWidth().height(180.dp),
                 )
-            } else if (fair.id.startsWith("demo-")) {
+            } else {
                 Box(
                     modifier = Modifier.fillMaxWidth().height(120.dp)
                         .background(MaterialTheme.colorScheme.tertiaryContainer),
                     contentAlignment = androidx.compose.ui.Alignment.Center,
                 ) {
-                    Text("Feria de muestra", color = MaterialTheme.colorScheme.onTertiaryContainer)
+                    Text(
+                        if (fair.id.startsWith("demo-")) "Feria de muestra" else "Imagen no disponible",
+                        color = MaterialTheme.colorScheme.onTertiaryContainer,
+                    )
                 }
             }
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(fair.name, style = MaterialTheme.typography.titleLarge)
             if (fair.description.isNotBlank()) Text(fair.description)
             Text("Lugar: ${fair.address.ifBlank { "Ubicación por confirmar" }}")
-            Text("Fecha: ${fair.startsAt?.let(::formatFairDate) ?: "Por confirmar"}")
+            Text("Desde: ${fair.startsAt?.let(::formatFairDate) ?: "Por confirmar"}")
+            Text("Hasta: ${fair.endsAt?.let(::formatFairDate) ?: "Por confirmar"}")
             if (fair.organizer.isNotBlank()) Text("Organiza: ${fair.organizer}")
             if (invitation != null) {
                 Text("Tu invitación: ${invitation.status.replaceFirstChar(Char::uppercase)}")
@@ -368,14 +398,14 @@ private fun FairPublicDetailsDialog(
             return@LaunchedEffect
         }
         runCatching {
-            val participantDocs = db.collection("fairs").document(fair.id).collection("participants")
+            val participantDocs = db.collection("ferias").document(fair.id).collection("participants")
                 .whereEqualTo("status", "confirmada").get().await().documents
-            val allProducts = db.collection("products").get().await().documents
-                .mapNotNull { document -> document.toObject(com.esp.bora.data.Product::class.java)?.copy(id = document.id) }
+            val allProducts = db.collection("productos").get().await().documents
+                .mapNotNull { document -> document.toBoraProduct() }
                 .filter { it.visibleInPublicCatalog }
             participantDocs.map { participant ->
                 val uid = participant.id
-                val stores = db.collection("stores").whereEqualTo("ownerUid", uid).limit(1).get().await()
+                val stores = db.collection("tiendas").whereEqualTo("ownerUid", uid).limit(1).get().await()
                 val storeId = stores.documents.firstOrNull()?.id ?: uid
                 FairPublicVendor(
                     uid = uid,
@@ -430,7 +460,8 @@ private fun FairPublicDetailsDialog(
             ) {
                 if (fair.description.isNotBlank()) Text(fair.description)
                 Text(fair.address)
-                Text("Fecha: " + (fair.startsAt?.let(::formatFairDate) ?: "Por confirmar"))
+                Text("Desde: " + (fair.startsAt?.let(::formatFairDate) ?: "Por confirmar"))
+                Text("Hasta: " + (fair.endsAt?.let(::formatFairDate) ?: "Por confirmar"))
                 Text("Organiza: " + fair.organizer)
                 FairMapPreview(fair)
                 TextButton(onClick = onDirections) { Text("Cómo llegar") }

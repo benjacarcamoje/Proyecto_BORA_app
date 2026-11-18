@@ -14,6 +14,14 @@
       },
       "oauth_client": [
         {
+          "client_id": "17026152565-2nci4mg98ek78ds0p4a9pri746rm8mf1.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.esp.bora",
+            "certificate_hash": "8ddd4c17506db3747513e24f70cbfe2cf10f9067"
+          }
+        },
+        {
           "client_id": "17026152565-ffkbqr5npda0pdjcvbpie562p3mgvbl4.apps.googleusercontent.com",
           "client_type": 3
         }

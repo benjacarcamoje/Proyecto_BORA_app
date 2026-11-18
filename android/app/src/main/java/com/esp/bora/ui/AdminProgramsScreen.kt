@@ -162,10 +162,10 @@ private fun FairAdminScreen(onBack: () -> Unit) {
         scope.launch {
             busy = true
             try {
-                fairs = db.collection("fairs").get().await().documents.mapNotNull { doc ->
+                fairs = db.collection("ferias").get().await().documents.mapNotNull { doc ->
                     doc.toObject(Fair::class.java)?.copy(id = doc.id)
                 }.sortedBy { it.startsAt?.seconds ?: Long.MAX_VALUE }
-                val storeTypes = db.collection("stores").get().await().documents.associate { doc ->
+                val storeTypes = db.collection("tiendas").get().await().documents.associate { doc ->
                     doc.getString("ownerUid").orEmpty() to doc.getString("businessType").orEmpty()
                 }
                 val accountData = functions.getHttpsCallable("adminListAccounts").call().await().getData() as? Map<*, *>
@@ -182,7 +182,7 @@ private fun FairAdminScreen(onBack: () -> Unit) {
                         storeTypes[uid].orEmpty(),
                     )
                 }
-                associations = db.collection("associations").get().await().documents.map { doc ->
+                associations = db.collection("asociaciones").get().await().documents.map { doc ->
                     mapOf("id" to doc.id, "name" to doc.getString("name").orEmpty())
                 }
                 message = "Datos administrativos actualizados."
@@ -200,7 +200,7 @@ private fun FairAdminScreen(onBack: () -> Unit) {
         if (fair == null) return
         scope.launch {
             runCatching {
-                db.collection("fairs").document(fair.id).collection("participants").get().await()
+                db.collection("ferias").document(fair.id).collection("participants").get().await()
                     .documents.map { doc ->
                         FairParticipantRow(
                             uid = doc.id,
@@ -331,12 +331,12 @@ private fun FairAdminScreen(onBack: () -> Unit) {
                                 "updatedAt" to FieldValue.serverTimestamp(),
                             )
                             if (selectedFair == null) {
-                                db.collection("fairs").add(data + ("createdAt" to FieldValue.serverTimestamp())).await()
+                                db.collection("ferias").add(data + ("createdAt" to FieldValue.serverTimestamp())).await()
                             } else {
-                                db.collection("fairs").document(selectedFair!!.id).update(data).await()
+                                db.collection("ferias").document(selectedFair!!.id).update(data).await()
                             }
                             message = "Feria guardada."
-                            fairs = db.collection("fairs").get().await().documents.mapNotNull { doc ->
+                            fairs = db.collection("ferias").get().await().documents.mapNotNull { doc ->
                                 doc.toObject(Fair::class.java)?.copy(id = doc.id)
                             }.sortedBy { it.startsAt?.seconds ?: Long.MAX_VALUE }
                         } catch (error: Exception) {
@@ -350,7 +350,7 @@ private fun FairAdminScreen(onBack: () -> Unit) {
                         scope.launch {
                             busy = true
                             try {
-                                db.collection("fairs").document(selectedFair!!.id).update(
+                                db.collection("ferias").document(selectedFair!!.id).update(
                                     mapOf("cancelled" to true, "published" to false, "updatedAt" to FieldValue.serverTimestamp()),
                                 ).await()
                                 message = "Feria cancelada."
@@ -395,7 +395,7 @@ private fun FairAdminScreen(onBack: () -> Unit) {
                                     ?: error("La sesión de administrador expiró.")
                                 selectedAccountIds.forEach { uid ->
                                     val account = accounts.first { it.uid == uid }
-                                    val ref = db.collection("fairs").document(fair.id).collection("participants").document(uid)
+                                    val ref = db.collection("ferias").document(fair.id).collection("participants").document(uid)
                                     val existing = ref.get().await()
                                     if (existing.getString("status") != "confirmada") {
                                         batch.set(ref, mapOf(
@@ -424,14 +424,14 @@ private fun FairAdminScreen(onBack: () -> Unit) {
                             scope.launch {
                                 busy = true
                                 try {
-                                    val associationRef = db.collection("associations").document(selectedAssociationId)
+                                    val associationRef = db.collection("asociaciones").document(selectedAssociationId)
                                     val members = associationRef.collection("members").get().await().documents
                                     val batch = db.batch()
                                     val adminUid = FirebaseAuth.getInstance().currentUser?.uid
                                         ?: error("La sesión de administrador expiró.")
                                     members.forEach { member ->
                                         val uid = member.id
-                                        val ref = db.collection("fairs").document(fair.id).collection("participants").document(uid)
+                                        val ref = db.collection("ferias").document(fair.id).collection("participants").document(uid)
                                         val existing = ref.get().await()
                                         if (existing.getString("status") != "confirmada") {
                                             batch.set(ref, mapOf(
@@ -519,7 +519,7 @@ private fun FairAdminScreen(onBack: () -> Unit) {
                                     onCheckedChange = { attended ->
                                         scope.launch {
                                             try {
-                                                db.collection("fairs").document(fair.id)
+                                                db.collection("ferias").document(fair.id)
                                                     .collection("participants").document(participant.uid)
                                                     .update(mapOf("attended" to attended, "updatedAt" to FieldValue.serverTimestamp()))
                                                     .await()
@@ -587,7 +587,7 @@ private fun AssociationAdminScreen(onBack: () -> Unit) {
         scope.launch {
             busy = true
             try {
-                associations = db.collection("associations").get().await().documents.map { doc ->
+                associations = db.collection("asociaciones").get().await().documents.map { doc ->
                     AssociationEntry(
                         id = doc.id,
                         name = doc.getString("name").orEmpty(),
@@ -598,7 +598,7 @@ private fun AssociationAdminScreen(onBack: () -> Unit) {
                         active = doc.getBoolean("active") != false,
                     )
                 }
-                val storeTypes = db.collection("stores").get().await().documents.associate { doc ->
+                val storeTypes = db.collection("tiendas").get().await().documents.associate { doc ->
                     doc.getString("ownerUid").orEmpty() to doc.getString("businessType").orEmpty()
                 }
                 val data = functions.getHttpsCallable("adminListAccounts").call().await().getData() as? Map<*, *>
@@ -632,7 +632,7 @@ private fun AssociationAdminScreen(onBack: () -> Unit) {
         selectedUid = ""
         if (entry != null) scope.launch {
             runCatching {
-                db.collection("associations").document(entry.id).collection("members").get().await()
+                db.collection("asociaciones").document(entry.id).collection("members").get().await()
                     .documents.map { it.id to it.getString("entrepreneurName").orEmpty() }
             }.onSuccess { members = it }
                 .onFailure { message = it.localizedMessage ?: "No se pudieron cargar integrantes." }
@@ -680,8 +680,8 @@ private fun AssociationAdminScreen(onBack: () -> Unit) {
                 scope.launch {
                     busy = true
                     try {
-                        val ref = selected?.let { db.collection("associations").document(it.id) }
-                            ?: db.collection("associations").document()
+                        val ref = selected?.let { db.collection("asociaciones").document(it.id) }
+                            ?: db.collection("asociaciones").document()
                         val data = mapOf(
                             "name" to name.trim(),
                             "logoUrl" to logoUrl.trim(),
@@ -736,7 +736,7 @@ private fun AssociationAdminScreen(onBack: () -> Unit) {
                             busy = true
                             try {
                                 val chosen = accounts.first { it.uid == selectedUid }
-                                db.collection("associations").document(entry.id).collection("members")
+                                db.collection("asociaciones").document(entry.id).collection("members")
                                     .document(chosen.uid).set(
                                         mapOf(
                                             "entrepreneurUid" to chosen.uid,
@@ -761,7 +761,7 @@ private fun AssociationAdminScreen(onBack: () -> Unit) {
                             scope.launch {
                                 busy = true
                                 try {
-                                    db.collection("associations").document(entry.id).collection("members").document(uid).delete().await()
+                                    db.collection("asociaciones").document(entry.id).collection("members").document(uid).delete().await()
                                     members = members.filterNot { it.first == uid }
                                     message = "Integrante quitada."
                                 } catch (error: Exception) { message = error.localizedMessage ?: "No se pudo quitar." }
@@ -775,7 +775,7 @@ private fun AssociationAdminScreen(onBack: () -> Unit) {
                         scope.launch {
                             busy = true
                             try {
-                                db.collection("associations").document(entry.id).update(
+                                db.collection("asociaciones").document(entry.id).update(
                                     mapOf("active" to false, "updatedAt" to FieldValue.serverTimestamp()),
                                 ).await()
                                 message = "Asociación desactivada."

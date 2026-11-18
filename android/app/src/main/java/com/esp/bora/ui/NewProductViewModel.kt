@@ -9,6 +9,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.esp.bora.data.ImageUtils
 import com.esp.bora.data.Product
+import com.esp.bora.data.ProductOptions
 import com.esp.bora.data.ProductRepository
 import com.esp.bora.data.ProductVariant
 import com.esp.bora.data.ProductVariantDraft
@@ -156,7 +157,7 @@ class NewProductViewModel(app: Application) : AndroidViewModel(app) {
         }
 
     fun addVariant() = _state.update {
-        if (it.variants.size >= 10) it.copy(error = "Puedes agregar hasta 10 variantes.")
+        if (it.variants.size >= ProductOptions.MAX_VARIANTS) it.copy(error = "Puedes agregar hasta ${ProductOptions.MAX_VARIANTS} variantes.")
         else it.copy(managesStock = true, variants = it.variants + ProductVariantDraft(), draftModified = true, error = null)
     }
     fun removeVariant(id: String) = _state.update { state ->

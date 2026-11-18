@@ -40,12 +40,12 @@ class SalesRepository(
             "Escribe el nombre de la feria."
         }
         val ownerUid = auth.currentUser?.uid ?: error("Tu sesión expiró. Vuelve a ingresar.")
-        val productRef = db.collection("products").document(request.productId)
+        val productRef = db.collection("productos").document(request.productId)
         val saleRef = db.collection("sales").document()
 
         return db.runTransaction { transaction ->
             val productSnapshot = transaction.get(productRef)
-            val product = productSnapshot.toObject(Product::class.java)
+            val product = productSnapshot.toBoraProduct()
                 ?: throw IllegalStateException("El producto ya no existe.")
             if (product.ownerUid != ownerUid) {
                 throw SecurityException("Solo puedes registrar ventas de tus productos.")

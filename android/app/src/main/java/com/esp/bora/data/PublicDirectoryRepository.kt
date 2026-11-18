@@ -25,7 +25,7 @@ class PublicDirectoryRepository(
     private val db: FirebaseFirestore = FirebaseFirestore.getInstance(),
 ) {
     fun observeAssociations(): Flow<List<PublicAssociation>> = callbackFlow {
-        val registration = db.collection("associations")
+        val registration = db.collection("asociaciones")
             .whereEqualTo("active", true)
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
@@ -47,7 +47,7 @@ class PublicDirectoryRepository(
     }
 
     suspend fun getMembers(associationId: String): List<AssociationMember> =
-        db.collection("associations").document(associationId).collection("members")
+        db.collection("asociaciones").document(associationId).collection("members")
             .get().await().documents.map { document ->
                 AssociationMember(
                     uid = document.id,

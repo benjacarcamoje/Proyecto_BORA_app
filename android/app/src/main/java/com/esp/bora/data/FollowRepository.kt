@@ -16,7 +16,7 @@ class FollowRepository(
     private val messaging: FirebaseMessaging = FirebaseMessaging.getInstance(),
 ) {
     fun observeFollowedStores(uid: String): Flow<Set<String>> = callbackFlow {
-        val registration = db.collection("users").document(uid).collection("follows")
+        val registration = db.collection("usuarios").document(uid).collection("follows")
             .whereEqualTo("targetType", "store")
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
@@ -31,17 +31,17 @@ class FollowRepository(
     suspend fun setStoreFollow(uid: String, storeId: String, following: Boolean, notificationsEnabled: Boolean) {
         require(auth.currentUser?.uid == uid) { "Inicia sesión para seguir una tienda." }
         require(storeId.isNotBlank())
-        val follow = db.collection("users").document(uid).collection("follows")
+        val follow = db.collection("usuarios").document(uid).collection("follows")
             .document("store_$storeId")
         if (!following) {
             follow.delete().await()
-            val remainingAlerts = db.collection("users").document(uid).collection("follows")
+            val remainingAlerts = db.collection("usuarios").document(uid).collection("follows")
                 .whereEqualTo("notificationsEnabled", true)
                 .limit(1)
                 .get()
                 .await()
             if (remainingAlerts.isEmpty) {
-                val devices = db.collection("users").document(uid).collection("devices").get().await()
+                val devices = db.collection("usuarios").document(uid).collection("devices").get().await()
                 devices.documents.chunked(400).forEach { page ->
                     db.batch().apply { page.forEach { delete(it.reference) } }.commit().await()
                 }
@@ -64,7 +64,7 @@ class FollowRepository(
     }
 
     fun observeFollowedAssociations(uid: String): Flow<Set<String>> = callbackFlow {
-        val registration = db.collection("users").document(uid).collection("follows")
+        val registration = db.collection("usuarios").document(uid).collection("follows")
             .whereEqualTo("targetType", "association")
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
@@ -77,7 +77,7 @@ class FollowRepository(
     }
 
     fun observeAssociationNotifications(uid: String): Flow<Set<String>> = callbackFlow {
-        val registration = db.collection("users").document(uid).collection("follows")
+        val registration = db.collection("usuarios").document(uid).collection("follows")
             .whereEqualTo("targetType", "association")
             .whereEqualTo("notificationsEnabled", true)
             .addSnapshotListener { snapshot, error ->
@@ -98,17 +98,17 @@ class FollowRepository(
     ) {
         require(auth.currentUser?.uid == uid) { "Inicia sesión para seguir una asociación." }
         require(associationId.isNotBlank())
-        val follow = db.collection("users").document(uid).collection("follows")
+        val follow = db.collection("usuarios").document(uid).collection("follows")
             .document("association_$associationId")
         if (!following) {
             follow.delete().await()
-            val remainingAlerts = db.collection("users").document(uid).collection("follows")
+            val remainingAlerts = db.collection("usuarios").document(uid).collection("follows")
                 .whereEqualTo("notificationsEnabled", true)
                 .limit(1)
                 .get()
                 .await()
             if (remainingAlerts.isEmpty) {
-                val devices = db.collection("users").document(uid).collection("devices").get().await()
+                val devices = db.collection("usuarios").document(uid).collection("devices").get().await()
                 devices.documents.chunked(400).forEach { page ->
                     db.batch().apply { page.forEach { delete(it.reference) } }.commit().await()
                 }
@@ -132,7 +132,7 @@ class FollowRepository(
 
     suspend fun setAssociationNotifications(uid: String, associationId: String, enabled: Boolean) {
         require(auth.currentUser?.uid == uid)
-        val follow = db.collection("users").document(uid).collection("follows")
+        val follow = db.collection("usuarios").document(uid).collection("follows")
             .document("association_$associationId")
         require(follow.get().await().exists()) { "Primero sigue esta asociación." }
         follow.update(
@@ -148,9 +148,9 @@ class FollowRepository(
 
     suspend fun registerTokenIfOptedIn(uid: String, token: String) {
         require(auth.currentUser?.uid == uid)
-        val user = db.collection("users").document(uid).get().await()
+        val user = db.collection("usuarios").document(uid).get().await()
         val isEntrepreneur = user.getString("role") == "emprendedora" && user.getBoolean("active") != false
-        val optedIn = if (isEntrepreneur) true else db.collection("users").document(uid).collection("follows")
+        val optedIn = if (isEntrepreneur) true else db.collection("usuarios").document(uid).collection("follows")
             .whereEqualTo("notificationsEnabled", true)
             .limit(1)
             .get()
@@ -160,7 +160,7 @@ class FollowRepository(
         val tokenId = MessageDigest.getInstance("SHA-256")
             .digest(token.toByteArray())
             .joinToString("") { "%02x".format(it) }
-        db.collection("users").document(uid).collection("devices").document(tokenId)
+        db.collection("usuarios").document(uid).collection("devices").document(tokenId)
             .set(mapOf("token" to token, "updatedAt" to FieldValue.serverTimestamp()))
             .await()
     }
