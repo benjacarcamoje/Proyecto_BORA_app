@@ -4,8 +4,7 @@ import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
-import com.google.firebase.storage.FirebaseStorage
-import com.google.firebase.storage.StorageMetadata
+import java.util.UUID
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
@@ -15,11 +14,10 @@ import kotlinx.coroutines.withTimeoutOrNull
 class ProductRepository(
     private val auth: FirebaseAuth = FirebaseAuth.getInstance(),
     private val db: FirebaseFirestore = FirebaseFirestore.getInstance(),
-    private val storage: FirebaseStorage = FirebaseStorage.getInstance(),
 ) {
     private companion object {
-        const val PRODUCTS = "products"
-        const val USERS = "users"
+        const val PRODUCTS = "productos"
+        const val USERS = "usuarios"
         const val UPLOAD_TIMEOUT_MS = 120_000L
         const val MAX_BATCH_WRITES = 450
         const val MAX_TYPE_FIELDS = 20
@@ -28,7 +26,7 @@ class ProductRepository(
     }
 
     fun observeMyProducts(uid: String): Flow<List<Product>> = observeProducts(
-        db.collection(PRODUCTS).whereEqualTo("ownerUid", uid),
+        db.collection(PRODUCTS).whereEqualTo("ID_Tienda", uid),
     )
 
     /** El catálogo público se filtra de nuevo en el cliente por disponibilidad y stock. */
@@ -42,7 +40,7 @@ class ProductRepository(
                     return@addSnapshotListener
                 }
                 val products = snapshot?.documents
-                    ?.mapNotNull { doc -> doc.toObject(Product::class.java)?.copy(id = doc.id) }
+                    ?.mapNotNull { doc -> doc.toBoraProduct() }
                     ?.sortedWith(
                         compareByDescending<Product> { it.createdAt?.seconds ?: Long.MAX_VALUE }
                             .thenByDescending { it.createdAt?.nanoseconds ?: 0 },
@@ -64,9 +62,12 @@ class ProductRepository(
         else db.collection(PRODUCTS).document(product.id)
 
         val previous = if (product.id.isBlank()) null else document.get().await()
-            .toObject(Product::class.java)?.copy(id = document.id)
+            .toBoraProduct()
         if (product.id.isNotBlank() && previous?.ownerUid != user.uid) {
             error("Solo puedes editar tus propios productos.")
+        }
+        require(product.variants.size <= ProductOptions.MAX_VARIANTS) {
+            "Un producto puede tener hasta ${ProductOptions.MAX_VARIANTS} variantes."
         }
         require(product.typeSpecificFields.size <= MAX_TYPE_FIELDS) {
             "Un producto puede tener hasta $MAX_TYPE_FIELDS datos específicos."
@@ -74,60 +75,49 @@ class ProductRepository(
         require(product.typeSpecificFields.all { (label, value) ->
             label.isNotBlank() && label.length <= MAX_FIELD_LABEL && value.length <= MAX_FIELD_VALUE
         }) { "Revisa los nombres y valores de los datos específicos." }
-        val uploadedPaths = mutableListOf<String>()
-        val photoRevision = System.currentTimeMillis()
-
-        return try {
-            val imagePath = if (mainImageBytes != null) {
-                "products/${user.uid}/${document.id}_$photoRevision.jpg".also { path ->
-                    upload(path, mainImageBytes)
-                    uploadedPaths += path
-                }
-            } else {
-                previous?.imagePath.orEmpty()
-            }
-            val imageUrl = if (mainImageBytes != null) {
-                storage.reference.child(imagePath).downloadUrl.await().toString()
-            } else previous?.imageUrl.orEmpty()
-
-            val variants = product.variants.map { variant ->
-                val bytes = variantImageBytes[variant.id]
-                if (bytes == null) variant
-                else {
-                    val path = "products/${user.uid}/${document.id}/variants/${variant.id}_$photoRevision.jpg"
-                    upload(path, bytes)
-                    uploadedPaths += path
-                    variant.copy(
-                        imagePath = path,
-                        imageUrl = storage.reference.child(path).downloadUrl.await().toString(),
-                    )
-                }
-            }
-            val saved = product.copy(
-                id = document.id,
-                ownerUid = user.uid,
-                storeId = storeId,
-                imageUrl = imageUrl,
-                imagePath = imagePath,
-                variants = variants,
-                createdAt = previous?.createdAt ?: product.createdAt ?: Timestamp.now(),
-            )
-            val data = saved.toFirestoreMap().toMutableMap().apply {
-                put("createdAt", previous?.createdAt ?: FieldValue.serverTimestamp())
-                put("updatedAt", FieldValue.serverTimestamp())
-            }
-            withTimeoutOrNull(UPLOAD_TIMEOUT_MS) { document.set(data).await() }
-                ?: error("Tiempo de espera agotado. Revisa tu conexión e inténtalo de nuevo.")
-
-            val retainedPaths = (listOf(saved.imagePath) + variants.map { it.imagePath }).toSet()
-            val replacedPaths = (listOfNotNull(previous?.imagePath) + previous?.variants.orEmpty().map { it.imagePath })
-                .filter { it.isNotBlank() && it !in retainedPaths }
-            replacedPaths.distinct().forEach { path -> runCatching { storage.reference.child(path).delete().await() } }
-            document.id
-        } catch (error: Exception) {
-            uploadedPaths.distinct().forEach { path -> runCatching { storage.reference.child(path).delete().await() } }
-            throw error
+        val imageUrl = if (mainImageBytes != null) {
+            val path = "productos/${user.uid}/${document.id}/${UUID.randomUUID()}.jpg"
+            SupabaseImageStorage.uploadJpeg(path, mainImageBytes)
+        } else {
+            previous?.imageUrl.orEmpty()
         }
+
+        val variants = product.variants.map { variant ->
+            val bytes = variantImageBytes[variant.id]
+            if (bytes == null) variant
+            else {
+                val path = "productos/${user.uid}/${document.id}/variantes/${variant.id}/${UUID.randomUUID()}.jpg"
+                variant.copy(
+                    imagePath = path,
+                    imageUrl = SupabaseImageStorage.uploadJpeg(path, bytes),
+                )
+            }
+        }
+        val originalStock = if (variants.isEmpty()) {
+            product.stock
+        } else {
+            product.stockOriginal
+        }
+        val saved = product.copy(
+            id = document.id,
+            ownerUid = user.uid,
+            storeId = storeId,
+            imageUrl = imageUrl,
+            imagePath = "",
+            stockOriginal = originalStock,
+            stock = originalStock + variants.filter { it.active }.sumOf { it.stock },
+            revision = (previous?.revision ?: 0) + 1,
+            lastSaleId = previous?.lastSaleId.orEmpty(),
+            sold = previous?.sold ?: product.sold,
+            variants = variants,
+            createdAt = previous?.createdAt ?: product.createdAt ?: Timestamp.now(),
+        )
+        val data = saved.toFirestoreMap().toMutableMap().apply {
+            put("ActualizadoEn", FieldValue.serverTimestamp())
+        }
+        withTimeoutOrNull(UPLOAD_TIMEOUT_MS) { document.set(data).await() }
+            ?: error("Tiempo de espera agotado. Revisa tu conexión e inténtalo de nuevo.")
+        return document.id
     }
 
     suspend fun setAvailability(productIds: List<String>, available: Boolean) {
@@ -149,18 +139,6 @@ class ProductRepository(
         val uid = auth.currentUser?.uid ?: error("Tu sesión expiró. Vuelve a ingresar.")
         require(product.ownerUid == uid) { "Solo puedes eliminar tus propios productos." }
         db.collection(PRODUCTS).document(product.id).delete().await()
-        (listOf(product.imagePath) + product.variants.map { it.imagePath })
-            .filter(String::isNotBlank)
-            .distinct()
-            .forEach { path -> runCatching { storage.reference.child(path).delete().await() } }
-    }
-
-    private suspend fun upload(path: String, bytes: ByteArray) {
-        val ref = storage.reference.child(path)
-        ref.putBytes(
-            bytes,
-            StorageMetadata.Builder().setContentType("image/jpeg").build(),
-        ).await()
     }
 
     private suspend fun resolveStoreId(uid: String): String =
@@ -169,23 +147,25 @@ class ProductRepository(
 }
 
 private fun Product.toFirestoreMap(): Map<String, Any> = mapOf(
-    "storeId" to storeId,
-    "ownerUid" to ownerUid,
-    "name" to name,
-    "description" to description,
-    "price" to price,
-    "imageUrl" to imageUrl,
-    "imagePath" to imagePath,
-    "category" to category,
-    "productType" to productType,
-    "modality" to modality,
-    "managesStock" to managesStock,
-    "stock" to stock,
-    "exhaustedBehavior" to exhaustedBehavior,
-    "available" to available,
-    "sold" to sold,
-    "typeSpecificFields" to typeSpecificFields,
-    "variants" to variants.map { variant ->
+    "ID_Producto" to id,
+    "ID_Tienda" to storeId,
+    "Nombre" to name,
+    "Categoria" to category,
+    "Precio" to price,
+    "Stock" to stock,
+    "StockOriginal" to stockOriginal,
+    "Disponible" to available,
+    "imagen" to imageUrl,
+    "Descripcion" to description,
+    "OfrecerPedido" to (modality == "A pedido"),
+    "PiezaUnica" to (modality == "Pieza única"),
+    "AccionAgotado" to when (exhaustedBehavior) {
+        "Ocultar" -> "ocultar"
+        "A pedido" -> "pedido"
+        else -> "mostrar"
+    },
+    "ManejaStock" to managesStock,
+    "Variantes" to variants.map { variant ->
         mapOf(
             "id" to variant.id,
             "name" to variant.name,
@@ -193,6 +173,10 @@ private fun Product.toFirestoreMap(): Map<String, Any> = mapOf(
             "stock" to variant.stock,
             "imageUrl" to variant.imageUrl,
             "imagePath" to variant.imagePath,
+            "active" to variant.active,
         )
     },
+    "Vendido" to sold,
+    "Revision" to revision,
+    "UltimaVenta" to lastSaleId,
 )

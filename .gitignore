@@ -5,6 +5,7 @@ node_modules/
 android/.gradle/
 android/**/build/
 android/local.properties
+/local.properties
 backend/.firebase/
 backend/.firebase-emulators/
 backend/*.log

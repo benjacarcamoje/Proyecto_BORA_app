@@ -1,9 +1,22 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("com.google.gms.google-services")
 }
+
+val supabaseLocalProperties = Properties()
+listOf(rootProject.file("../local.properties"), rootProject.file("local.properties"))
+    .filter { it.isFile }
+    .forEach { file -> file.inputStream().use { supabaseLocalProperties.load(it) } }
+val supabaseAnonKey = System.getenv("BORA_SUPABASE_ANON_KEY")
+    ?.takeIf(String::isNotBlank)
+    ?: supabaseLocalProperties.getProperty("supabase.anonKey", "")
+val escapedSupabaseAnonKey = supabaseAnonKey
+    .replace("\\", "\\\\")
+    .replace("\"", "\\\"")
 
 android {
     namespace = "com.esp.bora"
@@ -15,6 +28,10 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "1.0"
+
+        buildConfigField("String", "SUPABASE_URL", "\"https://supabase-grupo-esp.codepulse.cl\"")
+        buildConfigField("String", "SUPABASE_BUCKET", "\"img-bora\"")
+        buildConfigField("String", "SUPABASE_ANON_KEY", "\"$escapedSupabaseAnonKey\"")
     }
 
     buildTypes {
@@ -37,6 +54,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
@@ -70,7 +88,6 @@ dependencies {
     implementation("androidx.credentials:credentials-play-services-auth:1.3.0")
     implementation("com.google.android.libraries.identity.googleid:googleid:1.1.1")
     implementation("com.google.firebase:firebase-firestore")
-    implementation("com.google.firebase:firebase-storage")
     implementation("com.google.firebase:firebase-messaging")
     implementation("com.google.firebase:firebase-functions")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.9.0")

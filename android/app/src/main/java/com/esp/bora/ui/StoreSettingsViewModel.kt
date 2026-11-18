@@ -166,7 +166,7 @@ class StoreSettingsViewModel(app: Application) : AndroidViewModel(app) {
                     it.copy(
                         saving = false,
                         selectedLogoUri = null,
-                        message = "Ficha y configuración guardadas.",
+                        message = "Datos públicos de la tienda guardados.",
                     )
                 }
             } catch (e: CancellationException) {
